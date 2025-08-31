@@ -28,10 +28,12 @@ class DhikrDetectionEngine: ObservableObject {
     @Published var sessionState: SessionState = .inactive
     @Published var currentMilestone: Int = 0
     
-    // Data logging for development
+    // Enhanced session and data logging
+    private var currentSession: DhikrSession?
     private var sessionStartTime: Date?
     private var sensorDataLog: [SensorReading] = []
     private var detectionEventLog: [DetectionEvent] = []
+    private let maxLogSize = 18000 // 3 minutes at 100Hz (increased from 3000)
     
     enum SessionState: String {
         case inactive
@@ -61,6 +63,9 @@ class DhikrDetectionEngine: ObservableObject {
         pinchCount = 0
         currentMilestone = 0
         
+        // Create new session with enhanced metadata
+        currentSession = DhikrSession(startTime: sessionStartTime!, deviceInfo: .current)
+        
         // Clear previous session data
         clearLogs()
         
@@ -79,6 +84,22 @@ class DhikrDetectionEngine: ObservableObject {
     func stopSession() {
         print("Stopping dhikr session")
         motionManager.stopDeviceMotionUpdates()
+        
+        // Complete the current session with final statistics
+        if let session = currentSession, let startTime = sessionStartTime {
+            let endTime = Date()
+            let detectedPinches = detectionEventLog.filter { !$0.manualCorrection }.count
+            let manualCorrections = detectionEventLog.filter { $0.manualCorrection }.count
+            
+            currentSession = session.completed(
+                at: endTime,
+                totalPinches: pinchCount,
+                detectedPinches: detectedPinches,
+                manualCorrections: manualCorrections,
+                notes: "Session completed successfully"
+            )
+        }
+        
         sessionState = .inactive
         sessionStartTime = nil
         
@@ -118,8 +139,8 @@ class DhikrDetectionEngine: ObservableObject {
             detectPinch(acceleration: accelMag, gyroscope: gyroMag, time: currentTime)
         }
         
-        // Log data for development
-        logSensorData(accel: userAccel, gyro: rotationRate, activityIndex: activityIndex, time: currentTime)
+        // Log comprehensive sensor data for development
+        logSensorData(motion: motion, activityIndex: activityIndex, time: currentTime)
     }
     
     private func updateBuffers(acceleration: Double, gyroscope: Double, time: Date) {
@@ -251,7 +272,10 @@ class DhikrDetectionEngine: ObservableObject {
             WKInterfaceDevice.current().play(.click)
         }
         
-        // Log detection event
+        // Update recent sensor reading with detection info
+        updateRecentReadingWithDetection(time: time, manual: manual)
+        
+        // Log detection event  
         logDetectionEvent(score: score, accel: accel, gyro: gyro, time: time, manual: manual)
         
         print("Pinch detected! Count: \(pinchCount), Score: \(score.rounded(toPlaces: 2)), Manual: \(manual)")
@@ -294,21 +318,58 @@ class DhikrDetectionEngine: ObservableObject {
     
     // MARK: - Data Logging for Development
     
-    private func logSensorData(accel: CMAcceleration, gyro: CMRotationRate, activityIndex: Double, time: Date) {
+    private func logSensorData(motion: CMDeviceMotion, activityIndex: Double, time: Date) {
+        guard let session = currentSession else { return }
+        
         let reading = SensorReading(
             timestamp: time,
-            userAcceleration: SIMD3(accel.x, accel.y, accel.z),
-            rotationRate: SIMD3(gyro.x, gyro.y, gyro.z),
+            userAcceleration: SIMD3(motion.userAcceleration.x, motion.userAcceleration.y, motion.userAcceleration.z),
+            rotationRate: SIMD3(motion.rotationRate.x, motion.rotationRate.y, motion.rotationRate.z),
             activityIndex: activityIndex,
             detectionScore: scoreBuffer.last,
-            sessionState: SensorReading.SessionState(rawValue: sessionState.rawValue) ?? .inactive
+            sessionState: SensorReading.SessionState(rawValue: sessionState.rawValue) ?? .inactive,
+            sessionId: session.id,
+            gravity: SIMD3(motion.gravity.x, motion.gravity.y, motion.gravity.z),
+            attitudeX: motion.attitude.quaternion.x,
+            attitudeY: motion.attitude.quaternion.y,
+            attitudeZ: motion.attitude.quaternion.z,
+            attitudeW: motion.attitude.quaternion.w,
+            detectedPinch: false, // Will be updated when detection occurs
+            manualCorrection: false, // Will be updated for manual corrections
+            deviceInfo: session.deviceInfo
         )
         
         sensorDataLog.append(reading)
         
-        // Maintain reasonable log size (30 seconds at 100Hz)
-        if sensorDataLog.count > 3000 {
+        // Maintain reasonable log size (3 minutes at 100Hz)
+        if sensorDataLog.count > maxLogSize {
             sensorDataLog.removeFirst()
+        }
+    }
+    
+    private func updateRecentReadingWithDetection(time: Date, manual: Bool) {
+        // Find the most recent sensor reading close to the detection time
+        if let lastIndex = sensorDataLog.lastIndex(where: { abs($0.timestamp.timeIntervalSince(time)) < 0.1 }) {
+            var updatedReading = sensorDataLog[lastIndex]
+            // Create new reading with updated detection info (since SensorReading is immutable)
+            let newReading = SensorReading(
+                timestamp: updatedReading.timestamp,
+                userAcceleration: updatedReading.userAcceleration,
+                rotationRate: updatedReading.rotationRate,
+                activityIndex: updatedReading.activityIndex,
+                detectionScore: updatedReading.detectionScore,
+                sessionState: updatedReading.sessionState,
+                sessionId: updatedReading.sessionId,
+                gravity: updatedReading.gravity,
+                attitudeX: updatedReading.attitudeX,
+                attitudeY: updatedReading.attitudeY,
+                attitudeZ: updatedReading.attitudeZ,
+                attitudeW: updatedReading.attitudeW,
+                detectedPinch: true,
+                manualCorrection: manual,
+                deviceInfo: updatedReading.deviceInfo
+            )
+            sensorDataLog[lastIndex] = newReading
         }
     }
     
@@ -325,9 +386,17 @@ class DhikrDetectionEngine: ObservableObject {
         detectionEventLog.append(event)
     }
     
-    // Export function for companion app
+    // Export functions for companion app
     func exportSessionData() -> (sensorData: [SensorReading], detectionEvents: [DetectionEvent]) {
         return (sensorDataLog, detectionEventLog)
+    }
+    
+    func exportCurrentSession() -> DhikrSession? {
+        return currentSession
+    }
+    
+    func exportCompleteSessionData() -> (session: DhikrSession?, sensorData: [SensorReading], detectionEvents: [DetectionEvent]) {
+        return (currentSession, sensorDataLog, detectionEventLog)
     }
     
     func clearLogs() {
