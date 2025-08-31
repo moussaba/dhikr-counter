@@ -62,21 +62,9 @@ struct ControlButtonsView: View {
     @State private var showingResetConfirmation = false
     
     var body: some View {
-        VStack(spacing: 6) {
-            // Start/Stop button
-            Button(action: toggleSession) {
-                HStack(spacing: 4) {
-                    Image(systemName: detectionEngine.sessionState == .inactive ? "play.fill" : "stop.fill")
-                        .font(.caption2)
-                    Text(detectionEngine.sessionState == .inactive ? "Start" : "Stop")
-                        .font(.caption2)
-                }
-                .frame(maxWidth: .infinity, minHeight: 16)
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(false)
-            
-            HStack(spacing: 12) {
+        VStack(spacing: 8) {
+            // Manual increment and reset buttons (top row)
+            HStack(spacing: 8) {
                 // Manual increment button
                 Button(action: {
                     detectionEngine.manualPinchIncrement()
@@ -86,7 +74,7 @@ struct ControlButtonsView: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(detectionEngine.sessionState == .inactive)
-                .frame(width: 40, height: 32)
+                .frame(maxWidth: .infinity, minHeight: 12)
                 
                 // Reset button
                 Button(action: {
@@ -97,8 +85,21 @@ struct ControlButtonsView: View {
                 }
                 .buttonStyle(.bordered)
                 .foregroundColor(.red)
-                .frame(width: 40, height: 32)
+                .frame(maxWidth: .infinity, minHeight: 12)
             }
+            
+            // Start/Stop button (bottom, full width)
+            Button(action: toggleSession) {
+                HStack(spacing: 4) {
+                    Image(systemName: detectionEngine.sessionState == .inactive ? "play.fill" : "stop.fill")
+                        .font(.caption2)
+                    Text(detectionEngine.sessionState == .inactive ? "Start" : "Stop")
+                        .font(.caption2)
+                }
+                .frame(maxWidth: .infinity, minHeight: 12)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(false)
         }
         .confirmationDialog("Reset Counter", isPresented: $showingResetConfirmation) {
             Button("Reset", role: .destructive) {
