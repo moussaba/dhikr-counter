@@ -1,0 +1,19 @@
+name: DhikrCounterWatch
+options:
+  bundleIdPrefix: com.fuutaworks
+  deploymentTarget:
+    watchOS: "10.0"
+  groupOrdering:
+    - order: [DhikrCounter Watch App, Shared]
+
+targets:
+  DhikrCounter Watch App:
+    type: application
+    platform: watchOS
+    sources:
+      - DhikrCounter Watch App
+      - Shared
+    settings:
+      PRODUCT_NAME: $(TARGET_NAME)
+      PRODUCT_BUNDLE_IDENTIFIER: com.fuutaworks.DhikrCounter.watchkitapp
+      TARGETED_DEVICE_FAMILY: 4

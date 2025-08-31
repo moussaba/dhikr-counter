@@ -4,7 +4,7 @@ struct MilestoneView: View {
     @EnvironmentObject var detectionEngine: DhikrDetectionEngine
     
     var body: some View {
-        NavigationStack {
+        NavigationView {
             ScrollView {
                 VStack(spacing: 20) {
                     // Current milestone display
@@ -58,7 +58,7 @@ struct CurrentMilestoneView: View {
                 .multilineTextAlignment(.center)
         }
         .padding()
-        .background(Color(.systemGray6))
+        .background(Color.gray.opacity(0.2))
         .cornerRadius(16)
     }
 }
@@ -164,7 +164,7 @@ struct MilestoneCard: View {
         } else if isCurrent {
             return .green
         } else {
-            return Color(.systemGray4)
+            return Color.gray
         }
     }
     
@@ -172,7 +172,7 @@ struct MilestoneCard: View {
         if isCurrent {
             return Color.green.opacity(0.1)
         } else {
-            return Color(.systemGray6)
+            return Color.gray.opacity(0.2)
         }
     }
 }
@@ -241,7 +241,7 @@ struct DhikrInfoCard: View {
         }
         .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.systemGray6))
+        .background(Color.gray.opacity(0.2))
         .cornerRadius(12)
     }
 }

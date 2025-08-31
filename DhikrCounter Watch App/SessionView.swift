@@ -52,7 +52,7 @@ struct SessionStatsView: View {
             }
         }
         .padding()
-        .background(Color(.systemGray6))
+        .background(Color.gray.opacity(0.2))
         .cornerRadius(12)
     }
 }
@@ -74,7 +74,7 @@ struct AlgorithmStatusView: View {
             }
         }
         .padding()
-        .background(Color(.systemGray6))
+        .background(Color.gray.opacity(0.2))
         .cornerRadius(12)
     }
 }
@@ -117,7 +117,7 @@ struct SessionControlsView: View {
             }
         }
         .padding()
-        .background(Color(.systemGray6))
+        .background(Color.gray.opacity(0.2))
         .cornerRadius(12)
         .sheet(isPresented: $showingDataExport) {
             DataExportView()
@@ -194,7 +194,7 @@ struct DataExportView: View {
                     DataSummaryRow(label: "Total Pinches", count: detectionEngine.pinchCount)
                 }
                 .padding()
-                .background(Color(.systemGray6))
+                .background(Color.gray.opacity(0.2))
                 .cornerRadius(12)
                 
                 Text("Data export to iPhone companion app coming in Phase 3")
