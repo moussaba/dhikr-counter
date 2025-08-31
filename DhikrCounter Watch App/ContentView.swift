@@ -62,7 +62,7 @@ struct ControlButtonsView: View {
     @State private var showingResetConfirmation = false
     
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 4) {
             // Manual increment and reset buttons (top row)
             HStack(spacing: 8) {
                 // Manual increment button
@@ -74,7 +74,7 @@ struct ControlButtonsView: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(detectionEngine.sessionState == .inactive)
-                .frame(maxWidth: .infinity, minHeight: 12)
+                .frame(maxWidth: .infinity, maxHeight: 28)
                 
                 // Reset button
                 Button(action: {
@@ -85,7 +85,7 @@ struct ControlButtonsView: View {
                 }
                 .buttonStyle(.bordered)
                 .foregroundColor(.red)
-                .frame(maxWidth: .infinity, minHeight: 12)
+                .frame(maxWidth: .infinity, maxHeight: 28)
             }
             
             // Start/Stop button (bottom, full width)
@@ -96,7 +96,7 @@ struct ControlButtonsView: View {
                     Text(detectionEngine.sessionState == .inactive ? "Start" : "Stop")
                         .font(.caption2)
                 }
-                .frame(maxWidth: .infinity, minHeight: 12)
+                .frame(maxWidth: .infinity, maxHeight: 28)
             }
             .buttonStyle(.borderedProminent)
             .disabled(false)
