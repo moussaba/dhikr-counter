@@ -74,7 +74,7 @@ struct ControlButtonsView: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(detectionEngine.sessionState == .inactive)
-                .frame(maxWidth: .infinity, maxHeight: 20)
+                .frame(maxWidth: .infinity, maxHeight: 16)
                 
                 // Reset button
                 Button(action: {
@@ -85,7 +85,7 @@ struct ControlButtonsView: View {
                 }
                 .buttonStyle(.bordered)
                 .foregroundColor(.red)
-                .frame(maxWidth: .infinity, maxHeight: 20)
+                .frame(maxWidth: .infinity, maxHeight: 16)
             }
             
             // Start/Stop button (bottom, full width)
@@ -96,7 +96,7 @@ struct ControlButtonsView: View {
                     Text(detectionEngine.sessionState == .inactive ? "Start" : "Stop")
                         .font(.caption2)
                 }
-                .frame(maxWidth: .infinity, maxHeight: 20)
+                .frame(maxWidth: .infinity, maxHeight: 16)
             }
             .buttonStyle(.borderedProminent)
             .disabled(false)
