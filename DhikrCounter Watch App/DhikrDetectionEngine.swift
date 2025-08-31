@@ -12,16 +12,25 @@ class DhikrDetectionEngine: ObservableObject {
     private let refractoryPeriod: Double = 0.25
     private let activityThreshold: Double = 2.5
     
+    // Buffer management constants
+    private let bufferSize = 50
+    private let minBufferSizeForStats = 10
+    private let maxLogSize = 3000 // 30 seconds at 100Hz
+    private let robustStatsMADConstant = 1.4826
+    private let sessionSetupDelay = 3.0 // seconds
+    private let pauseDetectionThreshold = 1.0 // activity index
+    
     // Buffer management
     private var accelerationBuffer: [Double] = []
     private var gyroscopeBuffer: [Double] = []
     private var scoreBuffer: [Double] = []
     private var timeBuffer: [Date] = []
-    private let bufferSize = 50
     
     // Robust statistics for adaptive thresholding
-    private var runningMedian: Double = 0
-    private var runningMAD: Double = 0
+    private var runningAccelMedian: Double = 0
+    private var runningGyroMedian: Double = 0
+    private var runningAccelMAD: Double = 0
+    private var runningGyroMAD: Double = 0
     private var lastDetectionTime: Date = Date.distantPast
     
     @Published var pinchCount: Int = 0
@@ -67,8 +76,13 @@ class DhikrDetectionEngine: ObservableObject {
         motionManager.deviceMotionUpdateInterval = 1.0 / samplingRate
         motionManager.showsDeviceMovementDisplay = true
         
-        motionManager.startDeviceMotionUpdates(to: .main) { [weak self] motion, error in
-            guard let self = self, let motion = motion else { return }
+        motionManager.startDeviceMotionUpdates(to: OperationQueue()) { [weak self] motion, error in
+            guard let self = self, let motion = motion else { 
+                if let error = error {
+                    print("Motion update error: \(error.localizedDescription)")
+                }
+                return 
+            }
             self.processMotionData(motion)
         }
         
@@ -111,7 +125,11 @@ class DhikrDetectionEngine: ObservableObject {
         
         // Compute activity index for session state management
         let activityIndex = computeActivityIndex()
-        updateSessionState(activityIndex: activityIndex)
+        
+        // Dispatch UI updates to main queue
+        DispatchQueue.main.async { [weak self] in
+            self?.updateSessionState(activityIndex: activityIndex)
+        }
         
         // Only detect pinches during active dhikr state
         if sessionState == .activeDhikr {
@@ -136,7 +154,7 @@ class DhikrDetectionEngine: ObservableObject {
     }
     
     private func computeActivityIndex() -> Double {
-        guard accelerationBuffer.count >= 10 else { return 0 }
+        guard accelerationBuffer.count >= minBufferSizeForStats else { return 0 }
         
         let windowSize = min(100, accelerationBuffer.count)
         let recentAccel = Array(accelerationBuffer.suffix(windowSize))
@@ -156,11 +174,11 @@ class DhikrDetectionEngine: ObservableObject {
         // Update robust statistics
         updateRobustStatistics(acceleration: acceleration, gyroscope: gyroscope)
         
-        // Robust z-score computation
-        let zAccel = max(0, robustZScore(value: acceleration, median: runningMedian, mad: runningMAD))
-        let zGyro = max(0, robustZScore(value: gyroscope, median: runningMedian, mad: runningMAD))
-        let zAccelDeriv = max(0, robustZScore(value: accelDerivative, median: runningMedian, mad: runningMAD))
-        let zGyroDeriv = max(0, robustZScore(value: gyroDerivative, median: runningMedian, mad: runningMAD))
+        // Robust z-score computation with separate statistics
+        let zAccel = max(0, robustZScore(value: acceleration, median: runningAccelMedian, mad: runningAccelMAD))
+        let zGyro = max(0, robustZScore(value: gyroscope, median: runningGyroMedian, mad: runningGyroMAD))
+        let zAccelDeriv = max(0, robustZScore(value: accelDerivative, median: runningAccelMedian, mad: runningAccelMAD))
+        let zGyroDeriv = max(0, robustZScore(value: gyroDerivative, median: runningGyroMedian, mad: runningGyroMAD))
         
         // Multi-sensor fusion score
         let score = sqrt(zAccel*zAccel + zGyro*zGyro + zAccelDeriv*zAccelDeriv + zGyroDeriv*zGyroDeriv)
@@ -169,7 +187,7 @@ class DhikrDetectionEngine: ObservableObject {
         scoreBuffer.append(score)
         if scoreBuffer.count > bufferSize { scoreBuffer.removeFirst() }
         
-        let adaptiveThreshold = scoreBuffer.sorted()[Int(Double(scoreBuffer.count) * 0.90)]
+        let adaptiveThreshold = adaptiveThresholdValue()
         
         // Two-sensor gate + refractory period
         let timeSinceLastDetection = time.timeIntervalSince(lastDetectionTime)
@@ -179,33 +197,59 @@ class DhikrDetectionEngine: ObservableObject {
            gyroscope >= gyroscopeThreshold &&
            timeSinceLastDetection >= refractoryPeriod {
             
-            registerPinch(score: score, accel: acceleration, gyro: gyroscope, time: time, manual: false)
+            DispatchQueue.main.async { [weak self] in
+                self?.registerPinch(score: score, accel: acceleration, gyro: gyroscope, time: time, manual: false)
+            }
         }
     }
     
     private func computeDerivative(buffer: [Double], timeBuffer: [Date]) -> Double {
         guard buffer.count >= 2, timeBuffer.count >= 2 else { return 0 }
         
-        let lastValue = buffer.last!
-        let prevValue = buffer[buffer.count - 2]
-        let timeDiff = timeBuffer.last!.timeIntervalSince(timeBuffer[timeBuffer.count - 2])
+        guard let lastValue = buffer.last,
+              let prevValue = buffer.dropLast().last,
+              let lastTime = timeBuffer.last,
+              let prevTime = timeBuffer.dropLast().last else { return 0 }
+        
+        let timeDiff = lastTime.timeIntervalSince(prevTime)
+        guard timeDiff > 0 else { return 0 }
         
         return abs((lastValue - prevValue) / timeDiff)
     }
     
     private func robustZScore(value: Double, median: Double, mad: Double) -> Double {
         guard mad > 0 else { return 0 }
-        return (value - median) / (1.4826 * mad)
+        return (value - median) / (robustStatsMADConstant * mad)
     }
     
     private func updateRobustStatistics(acceleration: Double, gyroscope: Double) {
-        if accelerationBuffer.count >= 10 {
+        // Update acceleration statistics
+        if accelerationBuffer.count >= minBufferSizeForStats {
             let sortedAccel = accelerationBuffer.sorted()
-            runningMedian = sortedAccel[sortedAccel.count / 2]
+            runningAccelMedian = sortedAccel[sortedAccel.count / 2]
             
-            let deviations = accelerationBuffer.map { abs($0 - runningMedian) }.sorted()
-            runningMAD = deviations[deviations.count / 2]
+            let accelDeviations = accelerationBuffer.map { abs($0 - runningAccelMedian) }.sorted()
+            runningAccelMAD = accelDeviations[accelDeviations.count / 2]
         }
+        
+        // Update gyroscope statistics
+        if gyroscopeBuffer.count >= minBufferSizeForStats {
+            let sortedGyro = gyroscopeBuffer.sorted()
+            runningGyroMedian = sortedGyro[sortedGyro.count / 2]
+            
+            let gyroDeviations = gyroscopeBuffer.map { abs($0 - runningGyroMedian) }.sorted()
+            runningGyroMAD = gyroDeviations[gyroDeviations.count / 2]
+        }
+    }
+    
+    private func adaptiveThresholdValue() -> Double {
+        guard !scoreBuffer.isEmpty else { return 0.0 }
+        
+        let sortedScores = scoreBuffer.sorted()
+        let percentileIndex = Int(Double(sortedScores.count) * 0.90)
+        let safeIndex = min(percentileIndex, sortedScores.count - 1)
+        
+        return sortedScores[safeIndex]
     }
     
     private func updateSessionState(activityIndex: Double) {
@@ -213,13 +257,13 @@ class DhikrDetectionEngine: ObservableObject {
         
         switch sessionState {
         case .setup:
-            if timeSinceStart > 3.0 && activityIndex > activityThreshold {
+            if timeSinceStart > sessionSetupDelay && activityIndex > activityThreshold {
                 sessionState = .activeDhikr
                 print("Active dhikr detected - enabling pinch detection")
             }
             
         case .activeDhikr:
-            if activityIndex < 1.0 {
+            if activityIndex < pauseDetectionThreshold {
                 sessionState = .paused
                 print("Pause detected")
             }
@@ -306,8 +350,8 @@ class DhikrDetectionEngine: ObservableObject {
         
         sensorDataLog.append(reading)
         
-        // Maintain reasonable log size (30 seconds at 100Hz)
-        if sensorDataLog.count > 3000 {
+        // Maintain reasonable log size
+        if sensorDataLog.count > maxLogSize {
             sensorDataLog.removeFirst()
         }
     }
