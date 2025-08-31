@@ -1,5 +1,4 @@
 import SwiftUI
-import Charts
 
 struct DataVisualizationView: View {
     @State private var selectedTab = 0
