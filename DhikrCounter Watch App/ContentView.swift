@@ -71,7 +71,7 @@ struct ControlButtonsView: View {
                     Text(detectionEngine.sessionState == .inactive ? "Start" : "Stop")
                         .font(.caption2)
                 }
-                .frame(maxWidth: .infinity, minHeight: 20)
+                .frame(maxWidth: .infinity, minHeight: 16)
             }
             .buttonStyle(.borderedProminent)
             .disabled(false)
