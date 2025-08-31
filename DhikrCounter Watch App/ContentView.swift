@@ -67,11 +67,11 @@ struct ControlButtonsView: View {
             Button(action: toggleSession) {
                 HStack(spacing: 4) {
                     Image(systemName: detectionEngine.sessionState == .inactive ? "play.fill" : "stop.fill")
-                        .font(.caption)
+                        .font(.caption2)
                     Text(detectionEngine.sessionState == .inactive ? "Start" : "Stop")
-                        .font(.caption)
+                        .font(.caption2)
                 }
-                .frame(maxWidth: .infinity, minHeight: 32)
+                .frame(maxWidth: .infinity, minHeight: 28)
             }
             .buttonStyle(.borderedProminent)
             .disabled(false)
@@ -86,7 +86,7 @@ struct ControlButtonsView: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(detectionEngine.sessionState == .inactive)
-                .frame(width: 40, height: 32)
+                .frame(width: 36, height: 28)
                 
                 // Reset button
                 Button(action: {
@@ -97,7 +97,7 @@ struct ControlButtonsView: View {
                 }
                 .buttonStyle(.bordered)
                 .foregroundColor(.red)
-                .frame(width: 40, height: 32)
+                .frame(width: 36, height: 28)
             }
         }
         .confirmationDialog("Reset Counter", isPresented: $showingResetConfirmation) {
