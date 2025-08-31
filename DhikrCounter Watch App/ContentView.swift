@@ -4,7 +4,7 @@ struct ContentView: View {
     @EnvironmentObject var detectionEngine: DhikrDetectionEngine
     
     var body: some View {
-        NavigationStack {
+        NavigationView {
             VStack(spacing: 12) {
                 // Large counter display
                 CounterDisplayView()
@@ -17,7 +17,6 @@ struct ContentView: View {
             }
             .padding()
             .navigationTitle("Dhikr")
-            .navigationBarTitleDisplayMode(.inline)
         }
     }
 }
