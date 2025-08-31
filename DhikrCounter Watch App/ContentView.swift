@@ -10,11 +10,15 @@ struct ContentView: View {
             
             // Session state and progress
             SessionInfoView()
+                .layoutPriority(0) // Can shrink if needed
             
             // Control buttons
             ControlButtonsView()
+                .layoutPriority(2) // Higher priority to prevent overlap
         }
         .padding(.horizontal, 4)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.clear)
     }
 }
 
@@ -73,8 +77,9 @@ struct ControlButtonsView: View {
                         .font(.caption2)
                 }
                 .buttonStyle(.bordered)
+                .controlSize(.mini)
                 .disabled(detectionEngine.sessionState == .inactive)
-                .frame(maxWidth: .infinity, maxHeight: 16)
+                .frame(maxWidth: .infinity)
                 
                 // Reset button
                 Button(action: {
@@ -84,8 +89,9 @@ struct ControlButtonsView: View {
                         .font(.caption2)
                 }
                 .buttonStyle(.bordered)
+                .controlSize(.mini)
                 .foregroundColor(.red)
-                .frame(maxWidth: .infinity, maxHeight: 16)
+                .frame(maxWidth: .infinity)
             }
             
             // Start/Stop button (bottom, full width)
@@ -96,9 +102,10 @@ struct ControlButtonsView: View {
                     Text(detectionEngine.sessionState == .inactive ? "Start" : "Stop")
                         .font(.caption2)
                 }
-                .frame(maxWidth: .infinity, maxHeight: 16)
+                .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
+            .controlSize(.small)
             .disabled(false)
         }
         .confirmationDialog("Reset Counter", isPresented: $showingResetConfirmation) {
