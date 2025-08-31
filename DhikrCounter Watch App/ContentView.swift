@@ -4,21 +4,17 @@ struct ContentView: View {
     @EnvironmentObject var detectionEngine: DhikrDetectionEngine
     
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 12) {
-                // Large counter display
-                CounterDisplayView()
-                
-                // Session state and progress
-                SessionInfoView()
-                
-                // Control buttons
-                ControlButtonsView()
-            }
-            .padding()
-            .navigationTitle("Dhikr")
-            .navigationBarTitleDisplayMode(.inline)
+        VStack(spacing: 8) {
+            // Large counter display
+            CounterDisplayView()
+            
+            // Session state and progress
+            SessionInfoView()
+            
+            // Control buttons
+            ControlButtonsView()
         }
+        .padding(.horizontal, 4)
     }
 }
 
@@ -26,16 +22,16 @@ struct CounterDisplayView: View {
     @EnvironmentObject var detectionEngine: DhikrDetectionEngine
     
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 2) {
             // Main counter - large and prominent
             Text("\(detectionEngine.pinchCount)")
-                .font(.system(size: 60, weight: .bold, design: .rounded))
+                .font(.system(size: 48, weight: .bold, design: .rounded))
                 .foregroundColor(.primary)
                 .contentTransition(.numericText())
             
             // Session state indicator
             Text(detectionEngine.sessionState.displayText)
-                .font(.caption)
+                .font(.caption2)
                 .foregroundColor(.secondary)
         }
     }
@@ -45,11 +41,11 @@ struct SessionInfoView: View {
     @EnvironmentObject var detectionEngine: DhikrDetectionEngine
     
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 4) {
             // Progress bar for milestones
             ProgressView(value: detectionEngine.progressValue)
                 .progressViewStyle(LinearProgressViewStyle(tint: .green))
-                .scaleEffect(y: 2.0)
+                .scaleEffect(y: 1.5)
             
             // Milestone text
             Text(detectionEngine.milestoneText)
@@ -66,36 +62,42 @@ struct ControlButtonsView: View {
     @State private var showingResetConfirmation = false
     
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 6) {
             // Start/Stop button
             Button(action: toggleSession) {
-                HStack {
+                HStack(spacing: 4) {
                     Image(systemName: detectionEngine.sessionState == .inactive ? "play.fill" : "stop.fill")
+                        .font(.caption)
                     Text(detectionEngine.sessionState == .inactive ? "Start" : "Stop")
+                        .font(.caption)
                 }
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, minHeight: 32)
             }
             .buttonStyle(.borderedProminent)
             .disabled(false)
             
-            HStack(spacing: 12) {
+            HStack(spacing: 8) {
                 // Manual increment button
                 Button(action: {
                     detectionEngine.manualPinchIncrement()
                 }) {
                     Image(systemName: "plus")
+                        .font(.caption2)
                 }
                 .buttonStyle(.bordered)
                 .disabled(detectionEngine.sessionState == .inactive)
+                .frame(width: 40, height: 32)
                 
                 // Reset button
                 Button(action: {
                     showingResetConfirmation = true
                 }) {
                     Image(systemName: "arrow.counterclockwise")
+                        .font(.caption2)
                 }
                 .buttonStyle(.bordered)
                 .foregroundColor(.red)
+                .frame(width: 40, height: 32)
             }
         }
         .confirmationDialog("Reset Counter", isPresented: $showingResetConfirmation) {

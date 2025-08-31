@@ -2,14 +2,18 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.fuutaworks.DhikrCounter.watchkitapp</string>
+	<key>CFBundleExecutable</key>
+	<string>DhikrCounter Watch App</string>
 	<key>CFBundleDisplayName</key>
 	<string>Dhikr Counter</string>
 	<key>NSMotionUsageDescription</key>
 	<string>This app uses motion sensors to detect finger pinches during dhikr (Islamic prayer recitation) with research-validated accuracy.</string>
-	<key>WKWatchOnly</key>
+	<key>WKApplication</key>
 	<true/>
 	<key>WKCompanionAppBundleIdentifier</key>
-	<string>com.yourname.DhikrCounter</string>
+	<string>com.fuutaworks.DhikrCounter</string>
 	<key>NSHealthShareUsageDescription</key>
 	<string>This app may access health data to correlate with prayer session activity.</string>
 	<key>NSHealthUpdateUsageDescription</key>
