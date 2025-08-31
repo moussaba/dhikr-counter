@@ -62,21 +62,21 @@ struct ControlButtonsView: View {
     @State private var showingResetConfirmation = false
     
     var body: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 4) {
             // Start/Stop button
             Button(action: toggleSession) {
-                HStack(spacing: 4) {
+                HStack(spacing: 3) {
                     Image(systemName: detectionEngine.sessionState == .inactive ? "play.fill" : "stop.fill")
                         .font(.caption2)
                     Text(detectionEngine.sessionState == .inactive ? "Start" : "Stop")
                         .font(.caption2)
                 }
-                .frame(maxWidth: .infinity, minHeight: 28)
+                .frame(maxWidth: .infinity, minHeight: 24)
             }
             .buttonStyle(.borderedProminent)
             .disabled(false)
             
-            HStack(spacing: 8) {
+            HStack(spacing: 12) {
                 // Manual increment button
                 Button(action: {
                     detectionEngine.manualPinchIncrement()
@@ -86,7 +86,7 @@ struct ControlButtonsView: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(detectionEngine.sessionState == .inactive)
-                .frame(width: 36, height: 28)
+                .frame(width: 32, height: 24)
                 
                 // Reset button
                 Button(action: {
@@ -97,7 +97,7 @@ struct ControlButtonsView: View {
                 }
                 .buttonStyle(.bordered)
                 .foregroundColor(.red)
-                .frame(width: 36, height: 28)
+                .frame(width: 32, height: 24)
             }
         }
         .confirmationDialog("Reset Counter", isPresented: $showingResetConfirmation) {
