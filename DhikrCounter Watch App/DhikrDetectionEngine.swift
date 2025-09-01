@@ -37,10 +37,14 @@ class DhikrDetectionEngine: ObservableObject {
     @Published var sessionState: SessionState = .inactive
     @Published var currentMilestone: Int = 0
     
-    // Data logging for development
+    // Data logging and transfer
     private var sessionStartTime: Date?
     private var sensorDataLog: [SensorReading] = []
     private var detectionEventLog: [DetectionEvent] = []
+    private var currentSessionId: UUID?
+    
+    // WatchConnectivity integration
+    @Published var dataManager = WatchDataManager()
     
     enum SessionState: String {
         case inactive
@@ -59,16 +63,37 @@ class DhikrDetectionEngine: ObservableObject {
     }
     
     func startSession() {
-        guard motionManager.isDeviceMotionAvailable else { 
-            print("Device motion not available")
-            return 
+        print("🟢 toggleSession() called - attempting to start session")
+        
+        if !motionManager.isDeviceMotionAvailable {
+            print("⚠️ Device motion not available - likely simulator limitation")
+            print("🟡 Starting session in simulator mode (motion disabled)")
+            
+            // For simulator: start session without motion detection
+            sessionState = .setup
+            sessionStartTime = Date()
+            pinchCount = 0
+            currentMilestone = 0
+            currentSessionId = UUID()
+            clearLogs()
+            
+            // Provide haptic feedback
+            WKInterfaceDevice.current().play(.start)
+            
+            // Simulate transition to active state after setup delay
+            DispatchQueue.main.asyncAfter(deadline: .now() + sessionSetupDelay) {
+                print("🟢 Simulator: Auto-transitioning to active state")
+                self.sessionState = .activeDhikr
+            }
+            return
         }
         
-        print("Starting dhikr session")
+        print("🟢 Starting dhikr session with motion detection")
         sessionState = .setup
         sessionStartTime = Date()
         pinchCount = 0
         currentMilestone = 0
+        currentSessionId = UUID()
         
         // Clear previous session data
         clearLogs()
@@ -93,8 +118,15 @@ class DhikrDetectionEngine: ObservableObject {
     func stopSession() {
         print("Stopping dhikr session")
         motionManager.stopDeviceMotionUpdates()
+        
+        // Transfer session data to iPhone before stopping
+        if let sessionId = currentSessionId {
+            transferSessionDataToPhone(sessionId: sessionId)
+        }
+        
         sessionState = .inactive
         sessionStartTime = nil
+        currentSessionId = nil
         
         // Provide haptic feedback for session stop
         WKInterfaceDevice.current().play(.stop)
@@ -367,6 +399,57 @@ class DhikrDetectionEngine: ObservableObject {
         )
         
         detectionEventLog.append(event)
+    }
+    
+    // MARK: - Data Transfer to iPhone
+    
+    private func transferSessionDataToPhone(sessionId: UUID) {
+        guard !sensorDataLog.isEmpty else {
+            print("No sensor data to transfer")
+            return
+        }
+        
+        // Create session metadata
+        let session = createSessionSummary(sessionId: sessionId)
+        
+        // Transfer metadata first
+        dataManager.transferSessionMetadata(session: session)
+        
+        // Transfer sensor data and detection events
+        dataManager.transferSessionData(
+            sensorData: sensorDataLog,
+            detectionEvents: detectionEventLog,
+            sessionId: sessionId
+        )
+        
+        print("Initiated data transfer for session \(sessionId)")
+    }
+    
+    private func createSessionSummary(sessionId: UUID) -> DhikrSession {
+        let startTime = sessionStartTime ?? Date()
+        let endTime = Date()
+        
+        let detectedPinches = detectionEventLog.filter { !$0.manualCorrection }.count
+        let manualCorrections = detectionEventLog.filter { $0.manualCorrection }.count
+        
+        // Create initial session and then complete it
+        let initialSession = DhikrSession(startTime: startTime, deviceInfo: DeviceInfo.current)
+        return initialSession.completed(
+            at: endTime,
+            totalPinches: pinchCount,
+            detectedPinches: detectedPinches,
+            manualCorrections: manualCorrections,
+            notes: "Dhikr session completed"
+        )
+    }
+    
+    func manualTransferCurrentSession() {
+        guard let sessionId = currentSessionId else {
+            print("No active session to transfer")
+            return
+        }
+        
+        transferSessionDataToPhone(sessionId: sessionId)
     }
     
     // Export function for companion app

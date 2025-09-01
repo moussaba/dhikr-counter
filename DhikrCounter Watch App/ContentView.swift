@@ -4,20 +4,27 @@ struct ContentView: View {
     @EnvironmentObject var detectionEngine: DhikrDetectionEngine
     
     var body: some View {
-        NavigationView {
-            VStack(spacing: 12) {
-                // Large counter display
-                CounterDisplayView()
-                
-                // Session state and progress
-                SessionInfoView()
-                
-                // Control buttons
-                ControlButtonsView()
+        VStack(spacing: 8) {
+            // Large counter display
+            CounterDisplayView()
+            
+            // Session state and progress
+            SessionInfoView()
+                .layoutPriority(0) // Can shrink if needed
+            
+            // Data transfer status (when active)
+            if detectionEngine.dataManager.isTransferring {
+                DataTransferStatusView()
+                    .layoutPriority(1)
             }
-            .padding()
-            .navigationTitle("Dhikr")
+            
+            // Control buttons
+            ControlButtonsView()
+                .layoutPriority(2) // Higher priority to prevent overlap
         }
+        .padding(.horizontal, 4)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.clear)
     }
 }
 
@@ -25,16 +32,16 @@ struct CounterDisplayView: View {
     @EnvironmentObject var detectionEngine: DhikrDetectionEngine
     
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 2) {
             // Main counter - large and prominent
             Text("\(detectionEngine.pinchCount)")
-                .font(.system(size: 60, weight: .bold, design: .rounded))
+                .font(.system(size: 48, weight: .bold, design: .rounded))
                 .foregroundColor(.primary)
                 .contentTransition(.numericText())
             
             // Session state indicator
             Text(detectionEngine.sessionState.displayText)
-                .font(.caption)
+                .font(.caption2)
                 .foregroundColor(.secondary)
         }
     }
@@ -44,14 +51,40 @@ struct SessionInfoView: View {
     @EnvironmentObject var detectionEngine: DhikrDetectionEngine
     
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 4) {
             // Progress bar for milestones
             ProgressView(value: detectionEngine.progressValue)
                 .progressViewStyle(LinearProgressViewStyle(tint: .green))
-                .scaleEffect(y: 2.0)
+                .scaleEffect(y: 1.5)
             
             // Milestone text
             Text(detectionEngine.milestoneText)
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.horizontal, 8)
+    }
+}
+
+struct DataTransferStatusView: View {
+    @EnvironmentObject var detectionEngine: DhikrDetectionEngine
+    
+    var body: some View {
+        VStack(spacing: 4) {
+            HStack {
+                Image(systemName: "iphone")
+                    .foregroundColor(.blue)
+                Text("Transferring...")
+                    .font(.caption2)
+                    .foregroundColor(.blue)
+            }
+            
+            ProgressView(value: detectionEngine.dataManager.transferProgress)
+                .progressViewStyle(LinearProgressViewStyle(tint: .blue))
+                .scaleEffect(y: 1.5)
+            
+            Text(detectionEngine.dataManager.transferStatus)
                 .font(.caption2)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
@@ -65,37 +98,47 @@ struct ControlButtonsView: View {
     @State private var showingResetConfirmation = false
     
     var body: some View {
-        VStack(spacing: 8) {
-            // Start/Stop button
-            Button(action: toggleSession) {
-                HStack {
-                    Image(systemName: detectionEngine.sessionState == .inactive ? "play.fill" : "stop.fill")
-                    Text(detectionEngine.sessionState == .inactive ? "Start" : "Stop")
-                }
-                .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(false)
-            
-            HStack(spacing: 12) {
+        VStack(spacing: 4) {
+            // Manual increment and reset buttons (top row)
+            HStack(spacing: 8) {
                 // Manual increment button
                 Button(action: {
                     detectionEngine.manualPinchIncrement()
                 }) {
                     Image(systemName: "plus")
+                        .font(.caption2)
                 }
                 .buttonStyle(.bordered)
+                .controlSize(.mini)
                 .disabled(detectionEngine.sessionState == .inactive)
+                .frame(maxWidth: .infinity)
                 
                 // Reset button
                 Button(action: {
                     showingResetConfirmation = true
                 }) {
                     Image(systemName: "arrow.counterclockwise")
+                        .font(.caption2)
                 }
                 .buttonStyle(.bordered)
+                .controlSize(.mini)
                 .foregroundColor(.red)
+                .frame(maxWidth: .infinity)
             }
+            
+            // Start/Stop button (bottom, full width)
+            Button(action: toggleSession) {
+                HStack(spacing: 4) {
+                    Image(systemName: detectionEngine.sessionState == .inactive ? "play.fill" : "stop.fill")
+                        .font(.caption2)
+                    Text(detectionEngine.sessionState == .inactive ? "Start" : "Stop")
+                        .font(.caption2)
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .disabled(false)
         }
         .confirmationDialog("Reset Counter", isPresented: $showingResetConfirmation) {
             Button("Reset", role: .destructive) {
@@ -108,9 +151,12 @@ struct ControlButtonsView: View {
     }
     
     private func toggleSession() {
+        print("🔵 Start button tapped - current state: \(detectionEngine.sessionState)")
         if detectionEngine.sessionState == .inactive {
+            print("🔵 Calling startSession()")
             detectionEngine.startSession()
         } else {
+            print("🔵 Calling stopSession()")
             detectionEngine.stopSession()
         }
     }

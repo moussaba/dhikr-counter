@@ -15,20 +15,6 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "A3C40F59A3E9A67BBFCC134E"
-               BuildableName = "DhikrCounter.app"
-               BlueprintName = "DhikrCounter"
-               ReferencedContainer = "container:DhikrCounter.xcodeproj">
-            </BuildableReference>
-         </BuildActionEntry>
-         <BuildActionEntry
-            buildForTesting = "YES"
-            buildForRunning = "YES"
-            buildForProfiling = "YES"
-            buildForArchiving = "YES"
-            buildForAnalyzing = "YES">
-            <BuildableReference
-               BuildableIdentifier = "primary"
                BlueprintIdentifier = "4BE11503B9DECC4A73F871B5"
                BuildableName = "DhikrCounter Watch App.app"
                BlueprintName = "DhikrCounter Watch App"
@@ -46,9 +32,9 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "A3C40F59A3E9A67BBFCC134E"
-            BuildableName = "DhikrCounter.app"
-            BlueprintName = "DhikrCounter"
+            BlueprintIdentifier = "4BE11503B9DECC4A73F871B5"
+            BuildableName = "DhikrCounter Watch App.app"
+            BlueprintName = "DhikrCounter Watch App"
             ReferencedContainer = "container:DhikrCounter.xcodeproj">
          </BuildableReference>
       </MacroExpansion>
@@ -69,9 +55,9 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "A3C40F59A3E9A67BBFCC134E"
-            BuildableName = "DhikrCounter.app"
-            BlueprintName = "DhikrCounter"
+            BlueprintIdentifier = "4BE11503B9DECC4A73F871B5"
+            BuildableName = "DhikrCounter Watch App.app"
+            BlueprintName = "DhikrCounter Watch App"
             ReferencedContainer = "container:DhikrCounter.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -88,9 +74,9 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "A3C40F59A3E9A67BBFCC134E"
-            BuildableName = "DhikrCounter.app"
-            BlueprintName = "DhikrCounter"
+            BlueprintIdentifier = "4BE11503B9DECC4A73F871B5"
+            BuildableName = "DhikrCounter Watch App.app"
+            BlueprintName = "DhikrCounter Watch App"
             ReferencedContainer = "container:DhikrCounter.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
