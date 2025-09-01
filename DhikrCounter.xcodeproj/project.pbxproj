@@ -7,24 +7,83 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		036FD2741EB0FCA9ABDDA551 /* DetectionEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC78D9438E3F6B8D4933619A /* DetectionEvent.swift */; };
 		05F5AF870A839A38B9E93944 /* DhikrCounterCompanionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF3B7583992444EEB48508FC /* DhikrCounterCompanionApp.swift */; };
+		0B20F841BCE8466863936F39 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 955A2F5C2ABB7D9A3B6748A9 /* Assets.xcassets */; };
+		2035D7153706B6A4E0B6A76A /* MilestoneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01E63FC198631DA60983C514 /* MilestoneView.swift */; };
+		43DCBBF8A1AB8FCDB652E389 /* DhikrSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AFDA871D0700BE67FFE7D7D /* DhikrSession.swift */; };
+		4C7A9EE206F91488BBE29406 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E99CC193BB517BA466218A0 /* ContentView.swift */; };
+		5E9CAF645B9CD229BEBA4B60 /* DhikrSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AFDA871D0700BE67FFE7D7D /* DhikrSession.swift */; };
+		63E0E58DB7BA33E1C53F1DB7 /* CoreMotion.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 05895FD8BCFAEE6DFE45942C /* CoreMotion.framework */; };
+		692B0EA91BAB925090D459F0 /* SensorReading.swift in Sources */ = {isa = PBXBuildFile; fileRef = A216365DDD7AF6383A11141E /* SensorReading.swift */; };
 		6BC47273E49B7D5E32BC94F0 /* DataVisualizationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEDA213EFCDD446253B7B013 /* DataVisualizationView.swift */; };
+		726804E3EC7F72E2CE8F891F /* DhikrCounterApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF6B553DA73B0BD972D1242F /* DhikrCounterApp.swift */; };
+		79CDA13AC525E73D54686D18 /* WatchConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 95962C65F7C8378891BE7110 /* WatchConnectivity.framework */; };
+		79F61F1F8ED977AF362AD07B /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F657C64E8290259D316B999E /* Foundation.framework */; };
 		7AEA6899E904E6C8DABC8B4F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 93456EC972708BE419D20ECF /* Assets.xcassets */; };
+		7C2905802AE7A2DBA886853E /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 19B28EBF61C67C7579DB4D07 /* SwiftUI.framework */; };
+		81B1D043F11E083C032F9C8D /* PhoneDataManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0075BE3367DC295FAF12E789 /* PhoneDataManager.swift */; };
 		8B4DCF8588BB17059A74B1E5 /* DetectionEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC78D9438E3F6B8D4933619A /* DetectionEvent.swift */; };
+		9BDB0D46B42A27A8BAE0242C /* WatchConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 95962C65F7C8378891BE7110 /* WatchConnectivity.framework */; };
+		9E3F8A9C6CAD1D4683CB1C72 /* DhikrDetectionEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B95CADC91A5C2F92B6F4F9F0 /* DhikrDetectionEngine.swift */; };
 		AD35DC2FC6852F771701A144 /* CompanionContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C740095B6C0FC7671A15F035 /* CompanionContentView.swift */; };
 		ADEF9BF1E2FE041A5D411AC8 /* SensorReading.swift in Sources */ = {isa = PBXBuildFile; fileRef = A216365DDD7AF6383A11141E /* SensorReading.swift */; };
+		C01845AD9A84B3EABC33FB02 /* SessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3FCAF1BF6DC6DFB148D3241 /* SessionView.swift */; };
+		D11E1A0C9DFFB780BC229F9C /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 19B28EBF61C67C7579DB4D07 /* SwiftUI.framework */; };
+		D4E45A8AAFA09FE50F043F99 /* WatchDataManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5364D45465FF6B5C664524B /* WatchDataManager.swift */; };
+		FAAC33ABD9E9A7C22A589960 /* WatchKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B42F69224B2415F36C1294F4 /* WatchKit.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		0075BE3367DC295FAF12E789 /* PhoneDataManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneDataManager.swift; sourceTree = "<group>"; };
+		01E63FC198631DA60983C514 /* MilestoneView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MilestoneView.swift; sourceTree = "<group>"; };
+		05895FD8BCFAEE6DFE45942C /* CoreMotion.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreMotion.framework; path = System/Library/Frameworks/CoreMotion.framework; sourceTree = SDKROOT; };
+		19B28EBF61C67C7579DB4D07 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		1E99CC193BB517BA466218A0 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		31683209E7C5139A132FBBC6 /* DhikrCounter Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "DhikrCounter Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		7AFDA871D0700BE67FFE7D7D /* DhikrSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DhikrSession.swift; sourceTree = "<group>"; };
 		93456EC972708BE419D20ECF /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		955A2F5C2ABB7D9A3B6748A9 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		95962C65F7C8378891BE7110 /* WatchConnectivity.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WatchConnectivity.framework; path = System/Library/Frameworks/WatchConnectivity.framework; sourceTree = SDKROOT; };
+		95B8AC259A575FF2DA04BC25 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		A216365DDD7AF6383A11141E /* SensorReading.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SensorReading.swift; sourceTree = "<group>"; };
+		A5364D45465FF6B5C664524B /* WatchDataManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchDataManager.swift; sourceTree = "<group>"; };
 		AD5D7A008CC4FF919C03389A /* DhikrCounter.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = DhikrCounter.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AF3B7583992444EEB48508FC /* DhikrCounterCompanionApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DhikrCounterCompanionApp.swift; sourceTree = "<group>"; };
+		AF6B553DA73B0BD972D1242F /* DhikrCounterApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DhikrCounterApp.swift; sourceTree = "<group>"; };
+		B3FCAF1BF6DC6DFB148D3241 /* SessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionView.swift; sourceTree = "<group>"; };
+		B42F69224B2415F36C1294F4 /* WatchKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WatchKit.framework; path = System/Library/Frameworks/WatchKit.framework; sourceTree = SDKROOT; };
+		B95CADC91A5C2F92B6F4F9F0 /* DhikrDetectionEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DhikrDetectionEngine.swift; sourceTree = "<group>"; };
 		BC78D9438E3F6B8D4933619A /* DetectionEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetectionEvent.swift; sourceTree = "<group>"; };
 		C740095B6C0FC7671A15F035 /* CompanionContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionContentView.swift; sourceTree = "<group>"; };
 		D42AB9AAAF757BB67A9CBA94 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		F657C64E8290259D316B999E /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
 		FEDA213EFCDD446253B7B013 /* DataVisualizationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataVisualizationView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A873DD0CA21B8C369288FE31 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				79CDA13AC525E73D54686D18 /* WatchConnectivity.framework in Frameworks */,
+				FAAC33ABD9E9A7C22A589960 /* WatchKit.framework in Frameworks */,
+				7C2905802AE7A2DBA886853E /* SwiftUI.framework in Frameworks */,
+				63E0E58DB7BA33E1C53F1DB7 /* CoreMotion.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CA0A5DE7579A8CAB0860A7E6 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9BDB0D46B42A27A8BAE0242C /* WatchConnectivity.framework in Frameworks */,
+				79F61F1F8ED977AF362AD07B /* Foundation.framework in Frameworks */,
+				D11E1A0C9DFFB780BC229F9C /* SwiftUI.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		4AF01F2022C84C1A067DE418 /* DhikrCounter */ = {
@@ -35,6 +94,7 @@
 				FEDA213EFCDD446253B7B013 /* DataVisualizationView.swift */,
 				AF3B7583992444EEB48508FC /* DhikrCounterCompanionApp.swift */,
 				D42AB9AAAF757BB67A9CBA94 /* Info.plist */,
+				0075BE3367DC295FAF12E789 /* PhoneDataManager.swift */,
 			);
 			path = DhikrCounter;
 			sourceTree = "<group>";
@@ -42,6 +102,7 @@
 		4F48E3C182BC9C90519AFA25 /* Products */ = {
 			isa = PBXGroup;
 			children = (
+				31683209E7C5139A132FBBC6 /* DhikrCounter Watch App.app */,
 				AD5D7A008CC4FF919C03389A /* DhikrCounter.app */,
 			);
 			name = Products;
@@ -51,16 +112,46 @@
 			isa = PBXGroup;
 			children = (
 				BC78D9438E3F6B8D4933619A /* DetectionEvent.swift */,
+				7AFDA871D0700BE67FFE7D7D /* DhikrSession.swift */,
 				A216365DDD7AF6383A11141E /* SensorReading.swift */,
 			);
 			path = Shared;
+			sourceTree = "<group>";
+		};
+		8EC7B9FF2761149C94C0E39F /* DhikrCounter Watch App */ = {
+			isa = PBXGroup;
+			children = (
+				955A2F5C2ABB7D9A3B6748A9 /* Assets.xcassets */,
+				1E99CC193BB517BA466218A0 /* ContentView.swift */,
+				AF6B553DA73B0BD972D1242F /* DhikrCounterApp.swift */,
+				B95CADC91A5C2F92B6F4F9F0 /* DhikrDetectionEngine.swift */,
+				95B8AC259A575FF2DA04BC25 /* Info.plist */,
+				01E63FC198631DA60983C514 /* MilestoneView.swift */,
+				B3FCAF1BF6DC6DFB148D3241 /* SessionView.swift */,
+				A5364D45465FF6B5C664524B /* WatchDataManager.swift */,
+			);
+			path = "DhikrCounter Watch App";
+			sourceTree = "<group>";
+		};
+		9A234E8DC4C5434C7688CC4D /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				05895FD8BCFAEE6DFE45942C /* CoreMotion.framework */,
+				F657C64E8290259D316B999E /* Foundation.framework */,
+				19B28EBF61C67C7579DB4D07 /* SwiftUI.framework */,
+				95962C65F7C8378891BE7110 /* WatchConnectivity.framework */,
+				B42F69224B2415F36C1294F4 /* WatchKit.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 		D09FF684E627CC4332102D82 = {
 			isa = PBXGroup;
 			children = (
 				4AF01F2022C84C1A067DE418 /* DhikrCounter */,
+				8EC7B9FF2761149C94C0E39F /* DhikrCounter Watch App */,
 				7E61FEC58BB7086F89F6C413 /* Shared */,
+				9A234E8DC4C5434C7688CC4D /* Frameworks */,
 				4F48E3C182BC9C90519AFA25 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -68,12 +159,32 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		4BE11503B9DECC4A73F871B5 /* DhikrCounter Watch App */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0737BB4A095146EB051C1432 /* Build configuration list for PBXNativeTarget "DhikrCounter Watch App" */;
+			buildPhases = (
+				FE5CB9253AF4CCDDED67C571 /* Sources */,
+				1012EABFE15F2B14610B3500 /* Resources */,
+				A873DD0CA21B8C369288FE31 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "DhikrCounter Watch App";
+			packageProductDependencies = (
+			);
+			productName = "DhikrCounter Watch App";
+			productReference = 31683209E7C5139A132FBBC6 /* DhikrCounter Watch App.app */;
+			productType = "com.apple.product-type.application";
+		};
 		A3C40F59A3E9A67BBFCC134E /* DhikrCounter */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = F102077F28C7071B7414A59C /* Build configuration list for PBXNativeTarget "DhikrCounter" */;
 			buildPhases = (
 				3B8213A9C8725B5B29D3CFD1 /* Sources */,
 				8DB11148518DA833073DFB5E /* Resources */,
+				CA0A5DE7579A8CAB0860A7E6 /* Frameworks */,
 			);
 			buildRules = (
 			);
@@ -110,11 +221,20 @@
 			projectRoot = "";
 			targets = (
 				A3C40F59A3E9A67BBFCC134E /* DhikrCounter */,
+				4BE11503B9DECC4A73F871B5 /* DhikrCounter Watch App */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		1012EABFE15F2B14610B3500 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0B20F841BCE8466863936F39 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		8DB11148518DA833073DFB5E /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -134,26 +254,58 @@
 				6BC47273E49B7D5E32BC94F0 /* DataVisualizationView.swift in Sources */,
 				8B4DCF8588BB17059A74B1E5 /* DetectionEvent.swift in Sources */,
 				05F5AF870A839A38B9E93944 /* DhikrCounterCompanionApp.swift in Sources */,
+				5E9CAF645B9CD229BEBA4B60 /* DhikrSession.swift in Sources */,
+				81B1D043F11E083C032F9C8D /* PhoneDataManager.swift in Sources */,
 				ADEF9BF1E2FE041A5D411AC8 /* SensorReading.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FE5CB9253AF4CCDDED67C571 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4C7A9EE206F91488BBE29406 /* ContentView.swift in Sources */,
+				036FD2741EB0FCA9ABDDA551 /* DetectionEvent.swift in Sources */,
+				726804E3EC7F72E2CE8F891F /* DhikrCounterApp.swift in Sources */,
+				9E3F8A9C6CAD1D4683CB1C72 /* DhikrDetectionEngine.swift in Sources */,
+				43DCBBF8A1AB8FCDB652E389 /* DhikrSession.swift in Sources */,
+				2035D7153706B6A4E0B6A76A /* MilestoneView.swift in Sources */,
+				692B0EA91BAB925090D459F0 /* SensorReading.swift in Sources */,
+				C01845AD9A84B3EABC33FB02 /* SessionView.swift in Sources */,
+				D4E45A8AAFA09FE50F043F99 /* WatchDataManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
+		57A16E03F1F0214995F4F493 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				INFOPLIST_FILE = "DhikrCounter Watch App/Info.plist";
+				PRODUCT_BUNDLE_IDENTIFIER = com.fuutaworks.DhikrCounter.watchkitapp;
+				SDKROOT = watchos;
+				SKIP_INSTALL = NO;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Release;
+		};
 		6C979EBC390210A27027447A /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				INFOPLIST_FILE = DhikrCounter/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.fuutaworks.DhikrCounter;
 				SDKROOT = iphoneos;
+				SKIP_INSTALL = NO;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
@@ -164,16 +316,30 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				INFOPLIST_FILE = DhikrCounter/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.fuutaworks.DhikrCounter;
 				SDKROOT = iphoneos;
+				SKIP_INSTALL = NO;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
+		};
+		B84DFD8AD7433A84609AFDCA /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				INFOPLIST_FILE = "DhikrCounter Watch App/Info.plist";
+				PRODUCT_BUNDLE_IDENTIFIER = com.fuutaworks.DhikrCounter.watchkitapp;
+				SDKROOT = watchos;
+				SKIP_INSTALL = NO;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Debug;
 		};
 		F363EDD3184180129E65F989 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -227,13 +393,12 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				MARKETING_VERSION = 1.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
@@ -287,12 +452,11 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				MARKETING_VERSION = 1.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;
@@ -303,6 +467,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		0737BB4A095146EB051C1432 /* Build configuration list for PBXNativeTarget "DhikrCounter Watch App" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B84DFD8AD7433A84609AFDCA /* Debug */,
+				57A16E03F1F0214995F4F493 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		6515E584463DA5E859CFF131 /* Build configuration list for PBXProject "DhikrCounter" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

@@ -111,7 +111,7 @@ struct StatCard: View {
 }
 
 struct WatchConnectionView: View {
-    @State private var isConnected = false
+    @ObservedObject private var dataManager = PhoneDataManager.shared
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -120,25 +120,25 @@ struct WatchConnectionView: View {
                 .fontWeight(.semibold)
             
             HStack {
-                Image(systemName: isConnected ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                    .foregroundColor(isConnected ? .green : .orange)
+                Image(systemName: dataManager.isWatchConnected ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                    .foregroundColor(dataManager.isWatchConnected ? .green : .orange)
                 
-                Text(isConnected ? "Connected" : "Not Connected")
+                Text(dataManager.isWatchConnected ? "Connected" : "Not Connected")
                     .font(.subheadline)
                     .foregroundColor(.primary)
                 
                 Spacer()
                 
-                if !isConnected {
-                    Button("Connect") {
-                        // WatchConnectivity implementation in Phase 3
+                if !dataManager.isWatchConnected {
+                    Button("Retry") {
+                        // WCSession activation happens automatically
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
                 }
             }
             
-            Text("WatchConnectivity integration coming in Phase 3")
+            Text(dataManager.lastReceiveStatus)
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
@@ -149,6 +149,8 @@ struct WatchConnectionView: View {
 }
 
 struct RecentSessionsView: View {
+    @ObservedObject private var dataManager = PhoneDataManager.shared
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -164,20 +166,28 @@ struct RecentSessionsView: View {
                 .font(.caption)
             }
             
-            VStack(spacing: 8) {
-                Text("No sessions yet")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                
-                Text("Start a dhikr session on your Apple Watch to see data here")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
+            if dataManager.receivedSessions.isEmpty {
+                VStack(spacing: 8) {
+                    Text("No sessions yet")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    
+                    Text("Start a dhikr session on your Apple Watch to see data here")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(Color(.systemBackground))
+                .cornerRadius(12)
+            } else {
+                LazyVStack(spacing: 8) {
+                    ForEach(dataManager.receivedSessions.prefix(3)) { session in
+                        SessionRowView(session: session)
+                    }
+                }
             }
-            .frame(maxWidth: .infinity)
-            .padding()
-            .background(Color(.systemBackground))
-            .cornerRadius(12)
         }
         .padding()
         .background(Color(.systemGray6))
@@ -251,6 +261,62 @@ struct SettingRow: View {
             Text(value)
                 .foregroundColor(.secondary)
         }
+    }
+}
+
+struct SessionRowView: View {
+    let session: DhikrSession
+    
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(DateFormatter.sessionFormatter.string(from: session.startTime))
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                
+                HStack(spacing: 12) {
+                    Text("\(session.totalPinches) dhikr")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    Text(session.formattedDuration)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    if session.detectionAccuracy > 0 {
+                        Text("\(Int(session.detectionAccuracy * 100))% accuracy")
+                            .font(.caption)
+                            .foregroundColor(.green)
+                    }
+                }
+            }
+            
+            Spacer()
+            
+            Image(systemName: "chevron.right")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .padding()
+        .background(Color(.systemBackground))
+        .cornerRadius(12)
+    }
+}
+
+extension DateFormatter {
+    static let sessionFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        return formatter
+    }()
+}
+
+extension DhikrSession {
+    var formattedDuration: String {
+        let minutes = Int(sessionDuration / 60)
+        let seconds = Int(sessionDuration.truncatingRemainder(dividingBy: 60))
+        return "\(minutes):\(String(format: "%02d", seconds))"
     }
 }
 

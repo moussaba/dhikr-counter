@@ -15,6 +15,7 @@
 		984D0A73A42B334A87BAAA3B /* DetectionEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6A5242DA4844D332BB66891 /* DetectionEvent.swift */; };
 		A4ADEC210B205F12F0D725D2 /* DhikrCounterApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA88E221C99F6762BAA7FB94 /* DhikrCounterApp.swift */; };
 		E474802FEF32A4E895EEC7AA /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6E5665E082A75B32BC99AD1 /* ContentView.swift */; };
+		ED3B6D1B7CB15E9E7C096A89 /* WatchDataManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 917205EA84C823E846E0BC11 /* WatchDataManager.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -24,6 +25,7 @@
 		332A84592A28FE257A575EA4 /* DhikrDetectionEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DhikrDetectionEngine.swift; sourceTree = "<group>"; };
 		3F8D9692F912A73709950937 /* SessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionView.swift; sourceTree = "<group>"; };
 		7C8CE04D88D3A204367F9947 /* SensorReading.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SensorReading.swift; sourceTree = "<group>"; };
+		917205EA84C823E846E0BC11 /* WatchDataManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchDataManager.swift; sourceTree = "<group>"; };
 		C6E5665E082A75B32BC99AD1 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		CA88E221C99F6762BAA7FB94 /* DhikrCounterApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DhikrCounterApp.swift; sourceTree = "<group>"; };
 		E6A5242DA4844D332BB66891 /* DetectionEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetectionEvent.swift; sourceTree = "<group>"; };
@@ -67,6 +69,7 @@
 				0BD8DCC5D07693FE2D3B0421 /* Info.plist */,
 				E9A2BDA042A46B26C04311DC /* MilestoneView.swift */,
 				3F8D9692F912A73709950937 /* SessionView.swift */,
+				917205EA84C823E846E0BC11 /* WatchDataManager.swift */,
 			);
 			path = "DhikrCounter Watch App";
 			sourceTree = "<group>";
@@ -143,6 +146,7 @@
 				709F75C8DFD012D1AF40BABA /* MilestoneView.swift in Sources */,
 				78BDAD9C62923E3FE5F870C2 /* SensorReading.swift in Sources */,
 				828F7262750EF43EF17FD801 /* SessionView.swift in Sources */,
+				ED3B6D1B7CB15E9E7C096A89 /* WatchDataManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

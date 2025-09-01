@@ -21,6 +21,20 @@
                ReferencedContainer = "container:DhikrCounter.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "4BE11503B9DECC4A73F871B5"
+               BuildableName = "DhikrCounter Watch App.app"
+               BlueprintName = "DhikrCounter Watch App"
+               ReferencedContainer = "container:DhikrCounter.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction
