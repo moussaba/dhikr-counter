@@ -1,0 +1,19 @@
+# Core signal processing + plotting
+numpy>=1.26
+pandas>=2.2
+matplotlib>=3.8
+scipy>=1.11
+
+# Progress bars for parameter optimization
+tqdm>=4.66
+
+# Jupyter notebook in the venv
+notebook>=7.2
+ipykernel>=6.29
+
+# Optional (for sliders/widgets if you add them)
+ipywidgets>=8.1
+
+# Optional (misc Jupyter utilities)
+nbformat>=5.10
+

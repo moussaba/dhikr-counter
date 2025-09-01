@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 77;
+	objectVersion = 63;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -48,7 +48,7 @@
 		95B8AC259A575FF2DA04BC25 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		A216365DDD7AF6383A11141E /* SensorReading.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SensorReading.swift; sourceTree = "<group>"; };
 		A5364D45465FF6B5C664524B /* WatchDataManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchDataManager.swift; sourceTree = "<group>"; };
-		AD5D7A008CC4FF919C03389A /* DhikrCounter.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = DhikrCounter.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AD5D7A008CC4FF919C03389A /* DhikrCounter.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DhikrCounter.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AF3B7583992444EEB48508FC /* DhikrCounterCompanionApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DhikrCounterCompanionApp.swift; sourceTree = "<group>"; };
 		AF6B553DA73B0BD972D1242F /* DhikrCounterApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DhikrCounterApp.swift; sourceTree = "<group>"; };
 		B3FCAF1BF6DC6DFB148D3241 /* SessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionView.swift; sourceTree = "<group>"; };
@@ -216,7 +216,6 @@
 			);
 			mainGroup = D09FF684E627CC4332102D82;
 			minimizedProjectReferenceProxies = 1;
-			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -283,6 +282,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				DEVELOPMENT_TEAM = 987CDQSA63;
 				INFOPLIST_FILE = "DhikrCounter Watch App/Info.plist";
 				PRODUCT_BUNDLE_IDENTIFIER = com.fuutaworks.DhikrCounter.watchkitapp;
 				SDKROOT = watchos;
@@ -297,6 +297,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = 987CDQSA63;
 				INFOPLIST_FILE = DhikrCounter/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -315,6 +316,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = 987CDQSA63;
 				INFOPLIST_FILE = DhikrCounter/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -332,6 +334,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				DEVELOPMENT_TEAM = 987CDQSA63;
 				INFOPLIST_FILE = "DhikrCounter Watch App/Info.plist";
 				PRODUCT_BUNDLE_IDENTIFIER = com.fuutaworks.DhikrCounter.watchkitapp;
 				SDKROOT = watchos;
