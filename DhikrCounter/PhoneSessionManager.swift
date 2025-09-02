@@ -17,6 +17,19 @@ class PhoneSessionManager: NSObject, ObservableObject {
     private var storedSensorData: [String: [SensorReading]] = [:]
     private var storedDetectionEvents: [String: [DetectionEvent]] = [:]
     
+    // Public accessors for UI
+    func getSensorData(for sessionId: String) -> [SensorReading]? {
+        return storedSensorData[sessionId]
+    }
+    
+    func getDetectionEvents(for sessionId: String) -> [DetectionEvent]? {
+        return storedDetectionEvents[sessionId]
+    }
+    
+    func hasSensorData(for sessionId: String) -> Bool {
+        return storedSensorData[sessionId] != nil
+    }
+    
     private override init() {
         super.init()
         setupWatchConnectivity()
@@ -168,23 +181,38 @@ extension PhoneSessionManager: WCSessionDelegate {
     }
     
     nonisolated func session(_ session: WCSession, didReceive file: WCSessionFile) {
+        // CRITICAL: Process file immediately while it still exists
+        // WatchConnectivity may clean up the file very quickly
+        let fileURL = file.fileURL
+        let metadata = file.metadata ?? [:]
+        
+        // Read file data immediately before any async operations
+        guard let fileData = try? Data(contentsOf: fileURL) else {
+            Task { @MainActor in
+                self.addDebugMessage("❌ Could not read file immediately: \(fileURL.lastPathComponent)")
+                self.addDebugMessage("📁 File path: \(fileURL.path)")
+                self.addDebugMessage("📁 File exists: \(FileManager.default.fileExists(atPath: fileURL.path))")
+                self.lastReceiveStatus = "❌ File read failed"
+            }
+            return
+        }
+        
         Task { @MainActor in
-            self.addDebugMessage("📁 Received file: \(file.fileURL.lastPathComponent)")
-            self.addDebugMessage("📁 File metadata: \(file.metadata ?? [:])")
+            self.addDebugMessage("📁 Received file: \(fileURL.lastPathComponent)")
+            self.addDebugMessage("📁 File metadata: \(metadata)")
+            self.addDebugMessage("📁 File size read: \(ByteCountFormatter.string(fromByteCount: Int64(fileData.count), countStyle: .file))")
             
             self.isReceivingFile = true
             self.fileTransferProgress = "Processing received file..."
             
-            guard let metadata = file.metadata,
-                  let type = metadata["type"] as? String,
-                  type == "sessionFile" else {
+            guard let type = metadata["type"] as? String, type == "sessionFile" else {
                 self.addDebugMessage("❌ Invalid file metadata - not a session file")
                 self.isReceivingFile = false
                 self.lastReceiveStatus = "❌ Invalid file metadata"
                 return
             }
             
-            self.handleSessionFile(file, metadata: metadata)
+            self.handleSessionFile(fileData: fileData, metadata: metadata)
         }
     }
     
@@ -241,7 +269,7 @@ extension PhoneSessionManager: WCSessionDelegate {
         }
     }
     
-    private func handleSessionFile(_ file: WCSessionFile, metadata: [String: Any]) {
+    private func handleSessionFile(fileData: Data, metadata: [String: Any]) {
         addDebugMessage("📁 Processing session file...")
         
         guard let sessionIdString = metadata["sessionId"] as? String,
@@ -260,10 +288,10 @@ extension PhoneSessionManager: WCSessionDelegate {
         
         addDebugMessage("📁 File details - SessionId: \(sessionIdString), Readings: \(sensorCount), Size: \(ByteCountFormatter.string(fromByteCount: Int64(fileSize), countStyle: .file))")
         
-        // Process file in background
+        // Process file data in background
         Task {
             do {
-                let sessionData = try await processSessionFile(at: file.fileURL)
+                let sessionData = try await processSessionFile(data: fileData)
                 
                 await MainActor.run {
                     // Store the data
@@ -304,8 +332,10 @@ extension PhoneSessionManager: WCSessionDelegate {
         }
     }
     
-    private func processSessionFile(at url: URL) async throws -> SessionData {
-        let data = try Data(contentsOf: url)
+    private func processSessionFile(data: Data) async throws -> SessionData {
+        await MainActor.run {
+            self.addDebugMessage("📁 Processing \(data.count) bytes of JSON data")
+        }
         
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601

@@ -8,8 +8,8 @@ struct DataVisualizationView: View {
             VStack {
                 // Tab picker
                 Picker("Visualization Type", selection: $selectedTab) {
-                    Text("Timeline").tag(0)
-                    Text("Analysis").tag(1)
+                    Text("Sessions").tag(0)
+                    Text("Sensor Data").tag(1)
                     Text("Export").tag(2)
                 }
                 .pickerStyle(.segmented)
@@ -20,7 +20,7 @@ struct DataVisualizationView: View {
                 case 0:
                     TimelineVisualizationView()
                 case 1:
-                    AnalysisVisualizationView()
+                    SensorDataDetailView()
                 case 2:
                     ExportVisualizationView()
                 default:
@@ -93,32 +93,50 @@ struct RecentSensorDataView: View {
 
 struct SensorSessionRowView: View {
     let session: DhikrSession
+    @ObservedObject private var dataManager = PhoneSessionManager.shared
     
     var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Session \(session.id.uuidString.prefix(8))")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                
-                Text(DateFormatter.sessionFormatter.string(from: session.startTime))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                
-                if let notes = session.sessionNotes, notes.contains("sensor readings") {
-                    let readingCount = notes.split(separator: " ").first(where: { $0.allSatisfy { $0.isNumber } }) ?? "0"
-                    Text("\(readingCount) sensor readings")
+        NavigationLink(destination: SessionDetailView(session: session)) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Session \(session.id.uuidString.prefix(8))")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundColor(.primary)
+                    
+                    Text(DateFormatter.sessionFormatter.string(from: session.startTime))
                         .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    if let notes = session.sessionNotes, notes.contains("sensor readings") {
+                        let readingCount = notes.split(separator: " ").first(where: { $0.allSatisfy { $0.isNumber } }) ?? "0"
+                        Text("\(readingCount) sensor readings")
+                            .font(.caption)
+                            .foregroundColor(.blue)
+                    }
+                    
+                    // Show if sensor data is available
+                    if dataManager.hasSensorData(for: session.id.uuidString) {
+                        Text("📊 Raw data available")
+                            .font(.caption2)
+                            .foregroundColor(.green)
+                    }
+                }
+                
+                Spacer()
+                
+                VStack(spacing: 4) {
+                    Image(systemName: "waveform.path.ecg")
+                        .font(.title2)
                         .foregroundColor(.blue)
+                    
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
             }
-            
-            Spacer()
-            
-            Image(systemName: "waveform.path.ecg")
-                .font(.caption)
-                .foregroundColor(.secondary)
         }
+        .buttonStyle(PlainButtonStyle())
         .padding()
         .background(Color(.systemGray6))
         .cornerRadius(12)
@@ -450,6 +468,399 @@ struct ExportHistoryView: View {
         .padding()
         .background(Color(.systemBackground))
         .cornerRadius(16)
+    }
+}
+
+// MARK: - Preview
+
+// MARK: - New Views
+
+struct SensorDataDetailView: View {
+    @ObservedObject private var dataManager = PhoneSessionManager.shared
+    
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                if dataManager.receivedSessions.isEmpty {
+                    EmptyStateView(title: "No Sensor Data", 
+                                 message: "Transfer a session from your Apple Watch to view detailed sensor readings")
+                } else {
+                    ForEach(dataManager.receivedSessions) { session in
+                        SensorDataSessionCard(session: session)
+                    }
+                }
+            }
+            .padding()
+        }
+    }
+}
+
+struct SensorDataSessionCard: View {
+    let session: DhikrSession
+    @ObservedObject private var dataManager = PhoneSessionManager.shared
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Session \(session.id.uuidString.prefix(8))")
+                    .font(.headline)
+                    .fontWeight(.semibold)
+                
+                Spacer()
+                
+                if dataManager.hasSensorData(for: session.id.uuidString) {
+                    NavigationLink(destination: SessionDetailView(session: session)) {
+                        Text("View Data")
+                            .font(.caption)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.blue)
+                            .foregroundColor(.white)
+                            .cornerRadius(8)
+                    }
+                }
+            }
+            
+            Text(DateFormatter.sessionFormatter.string(from: session.startTime))
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            
+            if let sensorData = dataManager.getSensorData(for: session.id.uuidString) {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 8) {
+                    StatCard(title: "Sensor Readings", value: "\(sensorData.count)", color: .blue)
+                    StatCard(title: "Duration", value: String(format: "%.1fs", session.sessionDuration), color: .green)
+                    StatCard(title: "Sample Rate", value: "100 Hz", color: .orange)
+                    StatCard(title: "File Size", value: "\(Int(Double(sensorData.count) * 0.25))KB", color: .purple)
+                }
+            } else {
+                Text("No sensor data available for this session")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding()
+                    .background(Color(.systemGray6))
+                    .cornerRadius(8)
+            }
+        }
+        .padding()
+        .background(Color(.systemBackground))
+        .cornerRadius(16)
+    }
+}
+
+struct SessionDetailView: View {
+    let session: DhikrSession
+    @ObservedObject private var dataManager = PhoneSessionManager.shared
+    @State private var showingExportSheet = false
+    
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                // Session overview
+                SessionOverviewCard(session: session)
+                
+                // Sensor data preview
+                if let sensorData = dataManager.getSensorData(for: session.id.uuidString) {
+                    SensorDataPreviewCard(sensorData: sensorData)
+                    
+                    // Export button
+                    Button(action: { showingExportSheet = true }) {
+                        HStack {
+                            Image(systemName: "square.and.arrow.up")
+                            Text("Export Session Data")
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .padding(.horizontal)
+                }
+            }
+            .padding()
+        }
+        .navigationTitle("Session Details")
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showingExportSheet) {
+            SessionExportView(session: session)
+        }
+    }
+}
+
+struct SessionOverviewCard: View {
+    let session: DhikrSession
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Session Overview")
+                .font(.headline)
+                .fontWeight(.semibold)
+            
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 12) {
+                OverviewItem(title: "Session ID", value: session.id.uuidString.prefix(8).description)
+                OverviewItem(title: "Start Time", value: DateFormatter.sessionFormatter.string(from: session.startTime))
+                OverviewItem(title: "Duration", value: String(format: "%.1fs", session.sessionDuration))
+                OverviewItem(title: "Status", value: "Completed")
+            }
+        }
+        .padding()
+        .background(Color(.systemBackground))
+        .cornerRadius(16)
+    }
+}
+
+struct OverviewItem: View {
+    let title: String
+    let value: String
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Text(value)
+                .font(.subheadline)
+                .fontWeight(.medium)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(Color(.systemGray6))
+        .cornerRadius(8)
+    }
+}
+
+struct SensorDataPreviewCard: View {
+    let sensorData: [SensorReading]
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Sensor Data Preview")
+                .font(.headline)
+                .fontWeight(.semibold)
+            
+            // Sample data table
+            VStack(spacing: 8) {
+                // Header
+                HStack {
+                    Text("Time").font(.caption).fontWeight(.medium).frame(width: 60, alignment: .leading)
+                    Text("Accel X").font(.caption).fontWeight(.medium).frame(width: 60, alignment: .trailing)
+                    Text("Accel Y").font(.caption).fontWeight(.medium).frame(width: 60, alignment: .trailing)
+                    Text("Accel Z").font(.caption).fontWeight(.medium).frame(width: 60, alignment: .trailing)
+                    Text("Gyro X").font(.caption).fontWeight(.medium).frame(width: 60, alignment: .trailing)
+                    Spacer()
+                }
+                .padding(.horizontal)
+                .background(Color(.systemGray5))
+                .cornerRadius(4)
+                
+                // First few rows
+                ForEach(Array(sensorData.prefix(5).enumerated()), id: \.offset) { index, reading in
+                    HStack {
+                        Text(String(format: "%.1f", reading.timestamp.timeIntervalSinceReferenceDate))
+                            .font(.system(.caption, design: .monospaced))
+                            .frame(width: 60, alignment: .leading)
+                        Text(String(format: "%.3f", reading.userAcceleration.x))
+                            .font(.system(.caption, design: .monospaced))
+                            .frame(width: 60, alignment: .trailing)
+                        Text(String(format: "%.3f", reading.userAcceleration.y))
+                            .font(.system(.caption, design: .monospaced))
+                            .frame(width: 60, alignment: .trailing)
+                        Text(String(format: "%.3f", reading.userAcceleration.z))
+                            .font(.system(.caption, design: .monospaced))
+                            .frame(width: 60, alignment: .trailing)
+                        Text(String(format: "%.3f", reading.rotationRate.x))
+                            .font(.system(.caption, design: .monospaced))
+                            .frame(width: 60, alignment: .trailing)
+                        Spacer()
+                    }
+                    .padding(.horizontal)
+                }
+                
+                if sensorData.count > 5 {
+                    Text("... and \(sensorData.count - 5) more readings")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .padding()
+        .background(Color(.systemBackground))
+        .cornerRadius(16)
+    }
+}
+
+struct SessionExportView: View {
+    let session: DhikrSession
+    @ObservedObject private var dataManager = PhoneSessionManager.shared
+    @Environment(\.presentationMode) var presentationMode
+    @State private var exportFormat = "CSV"
+    @State private var includeMetadata = true
+    @State private var showingShareSheet = false
+    @State private var exportURL: URL?
+    
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 20) {
+                Text("Export Session Data")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Export Options")
+                        .font(.headline)
+                    
+                    Picker("Format", selection: $exportFormat) {
+                        Text("CSV").tag("CSV")
+                        Text("JSON").tag("JSON")
+                    }
+                    .pickerStyle(.segmented)
+                    
+                    Toggle("Include Metadata", isOn: $includeMetadata)
+                }
+                .padding()
+                .background(Color(.systemGray6))
+                .cornerRadius(12)
+                
+                Spacer()
+                
+                Button(action: exportData) {
+                    HStack {
+                        Image(systemName: "square.and.arrow.up")
+                        Text("Export Data")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .padding()
+            }
+            .padding()
+            .navigationBarTitleDisplayMode(.inline)
+            .navigationBarItems(
+                leading: Button("Cancel") {
+                    presentationMode.wrappedValue.dismiss()
+                }
+            )
+        }
+        .sheet(isPresented: $showingShareSheet) {
+            if let url = exportURL {
+                ShareSheet(activityItems: [url])
+            }
+        }
+    }
+    
+    private func exportData() {
+        guard let sensorData = dataManager.getSensorData(for: session.id.uuidString) else { return }
+        
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let fileName = "session_\(session.id.uuidString.prefix(8))_\(Int(Date().timeIntervalSince1970)).\(exportFormat.lowercased())"
+        let fileURL = documentsPath.appendingPathComponent(fileName)
+        
+        do {
+            if exportFormat == "CSV" {
+                let csvContent = generateCSV(sensorData: sensorData, session: session, includeMetadata: includeMetadata)
+                try csvContent.write(to: fileURL, atomically: true, encoding: .utf8)
+            } else {
+                let jsonContent = generateJSON(sensorData: sensorData, session: session, includeMetadata: includeMetadata)
+                try jsonContent.write(to: fileURL, atomically: true, encoding: .utf8)
+            }
+            
+            exportURL = fileURL
+            showingShareSheet = true
+            
+        } catch {
+            print("Export error: \(error)")
+        }
+    }
+    
+    private func generateCSV(sensorData: [SensorReading], session: DhikrSession, includeMetadata: Bool) -> String {
+        var csv = ""
+        
+        if includeMetadata {
+            csv += "# Session ID: \(session.id.uuidString)\n"
+            csv += "# Start Time: \(session.startTime)\n"
+            csv += "# Duration: \(session.sessionDuration)s\n"
+            csv += "# Total Readings: \(sensorData.count)\n"
+            csv += "#\n"
+        }
+        
+        csv += "timestamp,accel_x,accel_y,accel_z,gyro_x,gyro_y,gyro_z\n"
+        
+        for reading in sensorData {
+            csv += "\(reading.timestamp.timeIntervalSinceReferenceDate),"
+            csv += "\(reading.userAcceleration.x),\(reading.userAcceleration.y),\(reading.userAcceleration.z),"
+            csv += "\(reading.rotationRate.x),\(reading.rotationRate.y),\(reading.rotationRate.z)\n"
+        }
+        
+        return csv
+    }
+    
+    private func generateJSON(sensorData: [SensorReading], session: DhikrSession, includeMetadata: Bool) -> String {
+        var json: [String: Any] = [:]
+        
+        if includeMetadata {
+            json["metadata"] = [
+                "sessionId": session.id.uuidString,
+                "startTime": session.startTime.timeIntervalSinceReferenceDate,
+                "duration": session.sessionDuration,
+                "totalReadings": sensorData.count
+            ]
+        }
+        
+        let readings = sensorData.map { reading in
+            return [
+                "timestamp": reading.timestamp.timeIntervalSinceReferenceDate,
+                "userAcceleration": [
+                    "x": reading.userAcceleration.x,
+                    "y": reading.userAcceleration.y,
+                    "z": reading.userAcceleration.z
+                ],
+                "rotationRate": [
+                    "x": reading.rotationRate.x,
+                    "y": reading.rotationRate.y,
+                    "z": reading.rotationRate.z
+                ]
+            ]
+        }
+        
+        json["sensorData"] = readings
+        
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: json, options: .prettyPrinted),
+              let jsonString = String(data: jsonData, encoding: .utf8) else {
+            return "{\"error\": \"Failed to encode JSON\"}"
+        }
+        
+        return jsonString
+    }
+}
+
+struct ShareSheet: UIViewControllerRepresentable {
+    let activityItems: [Any]
+    
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+    }
+    
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+struct EmptyStateView: View {
+    let title: String
+    let message: String
+    
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "waveform.path.ecg")
+                .font(.system(size: 48))
+                .foregroundColor(.secondary)
+            
+            Text(title)
+                .font(.title2)
+                .fontWeight(.semibold)
+            
+            Text(message)
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+        }
+        .padding(40)
     }
 }
 
