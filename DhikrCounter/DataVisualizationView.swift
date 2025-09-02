@@ -1,4 +1,5 @@
 import SwiftUI
+import Charts
 
 struct DataVisualizationView: View {
     @State private var selectedTab = 0
@@ -628,61 +629,156 @@ struct OverviewItem: View {
 
 struct SensorDataPreviewCard: View {
     let sensorData: [SensorReading]
+    @State private var selectedMetric: SensorMetric = .accelerationMagnitude
+    
+    enum SensorMetric: String, CaseIterable {
+        case accelerationMagnitude = "Acceleration Magnitude"
+        case rotationMagnitude = "Rotation Magnitude"
+        case accelerationX = "Acceleration X"
+        case accelerationY = "Acceleration Y" 
+        case accelerationZ = "Acceleration Z"
+        case rotationX = "Rotation X"
+        case rotationY = "Rotation Y"
+        case rotationZ = "Rotation Z"
+    }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Sensor Data Preview")
-                .font(.headline)
-                .fontWeight(.semibold)
-            
-            // Sample data table
-            VStack(spacing: 8) {
-                // Header
-                HStack {
-                    Text("Time").font(.caption).fontWeight(.medium).frame(width: 60, alignment: .leading)
-                    Text("Accel X").font(.caption).fontWeight(.medium).frame(width: 60, alignment: .trailing)
-                    Text("Accel Y").font(.caption).fontWeight(.medium).frame(width: 60, alignment: .trailing)
-                    Text("Accel Z").font(.caption).fontWeight(.medium).frame(width: 60, alignment: .trailing)
-                    Text("Gyro X").font(.caption).fontWeight(.medium).frame(width: 60, alignment: .trailing)
-                    Spacer()
-                }
-                .padding(.horizontal)
-                .background(Color(.systemGray5))
-                .cornerRadius(4)
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("Sensor Data Visualization")
+                    .font(.headline)
+                    .fontWeight(.semibold)
                 
-                // First few rows
-                ForEach(Array(sensorData.prefix(5).enumerated()), id: \.offset) { index, reading in
-                    HStack {
-                        Text(String(format: "%.1f", reading.timestamp.timeIntervalSinceReferenceDate))
-                            .font(.system(.caption, design: .monospaced))
-                            .frame(width: 60, alignment: .leading)
-                        Text(String(format: "%.3f", reading.userAcceleration.x))
-                            .font(.system(.caption, design: .monospaced))
-                            .frame(width: 60, alignment: .trailing)
-                        Text(String(format: "%.3f", reading.userAcceleration.y))
-                            .font(.system(.caption, design: .monospaced))
-                            .frame(width: 60, alignment: .trailing)
-                        Text(String(format: "%.3f", reading.userAcceleration.z))
-                            .font(.system(.caption, design: .monospaced))
-                            .frame(width: 60, alignment: .trailing)
-                        Text(String(format: "%.3f", reading.rotationRate.x))
-                            .font(.system(.caption, design: .monospaced))
-                            .frame(width: 60, alignment: .trailing)
-                        Spacer()
+                Spacer()
+                
+                Picker("Metric", selection: $selectedMetric) {
+                    ForEach(SensorMetric.allCases, id: \.self) { metric in
+                        Text(metric.rawValue).tag(metric)
                     }
-                    .padding(.horizontal)
                 }
-                
-                if sensorData.count > 5 {
-                    Text("... and \(sensorData.count - 5) more readings")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                .pickerStyle(.menu)
+                .font(.caption)
+            }
+            
+            // Simple line chart
+            Chart {
+                ForEach(Array(chartData.prefix(1000).enumerated()), id: \.offset) { index, dataPoint in
+                    LineMark(
+                        x: .value("Time", dataPoint.time),
+                        y: .value(selectedMetric.rawValue, dataPoint.value)
+                    )
+                    .foregroundStyle(chartColor)
+                    .interpolationMethod(.catmullRom)
                 }
             }
+            .frame(height: 200)
+            .chartXAxis {
+                AxisMarks(position: .bottom) { value in
+                    AxisValueLabel {
+                        if let timeValue = value.as(Double.self) {
+                            Text(String(format: "%.1fs", timeValue))
+                                .font(.caption2)
+                        }
+                    }
+                    AxisGridLine()
+                }
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading) { value in
+                    AxisValueLabel {
+                        if let yValue = value.as(Double.self) {
+                            Text(String(format: "%.2f", yValue))
+                                .font(.caption2)
+                        }
+                    }
+                    AxisGridLine()
+                }
+            }
+            
+            // Data summary
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Total Readings")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text("\(sensorData.count)")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                }
+                
+                Spacer()
+                
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("Sample Rate")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text("100 Hz")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                }
+                
+                Spacer()
+                
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("Duration")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text(String(format: "%.1fs", duration))
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                }
+            }
+            .padding(.horizontal)
         }
         .padding()
         .background(Color(.systemBackground))
         .cornerRadius(16)
+    }
+    
+    private var chartData: [(time: Double, value: Double)] {
+        guard !sensorData.isEmpty else { return [] }
+        
+        let startTime = sensorData.first!.timestamp.timeIntervalSinceReferenceDate
+        
+        return sensorData.map { reading in
+            let timeOffset = reading.timestamp.timeIntervalSinceReferenceDate - startTime
+            let value: Double
+            
+            switch selectedMetric {
+            case .accelerationMagnitude:
+                value = reading.accelerationMagnitude
+            case .rotationMagnitude:
+                value = reading.rotationMagnitude
+            case .accelerationX:
+                value = reading.userAcceleration.x
+            case .accelerationY:
+                value = reading.userAcceleration.y
+            case .accelerationZ:
+                value = reading.userAcceleration.z
+            case .rotationX:
+                value = reading.rotationRate.x
+            case .rotationY:
+                value = reading.rotationRate.y
+            case .rotationZ:
+                value = reading.rotationRate.z
+            }
+            
+            return (time: timeOffset, value: value)
+        }
+    }
+    
+    private var chartColor: Color {
+        switch selectedMetric {
+        case .accelerationMagnitude, .accelerationX, .accelerationY, .accelerationZ:
+            return .blue
+        case .rotationMagnitude, .rotationX, .rotationY, .rotationZ:
+            return .orange
+        }
+    }
+    
+    private var duration: Double {
+        guard sensorData.count > 1 else { return 0 }
+        return sensorData.last!.timestamp.timeIntervalSince(sensorData.first!.timestamp)
     }
 }
 

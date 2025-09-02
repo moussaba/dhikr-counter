@@ -56,9 +56,6 @@ struct DashboardView: View {
                     // Watch connection status
                     WatchConnectionView()
                     
-                    // Debug information
-                    WatchDebugView()
-                    
                     // Recent sessions
                     RecentSessionsView()
                 }
@@ -71,6 +68,8 @@ struct DashboardView: View {
 }
 
 struct QuickStatsView: View {
+    @ObservedObject private var dataManager = PhoneSessionManager.shared
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Quick Stats")
@@ -78,15 +77,55 @@ struct QuickStatsView: View {
                 .fontWeight(.semibold)
             
             LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 12) {
-                StatCard(title: "Total Sessions", value: "0", color: .blue)
-                StatCard(title: "Total Dhikr", value: "0", color: .green)
-                StatCard(title: "Average Accuracy", value: "N/A", color: .orange)
-                StatCard(title: "Best Session", value: "N/A", color: .purple)
+                StatCard(title: "Total Sessions", value: "\(dataManager.receivedSessions.count)", color: .blue)
+                StatCard(title: "Sensor Readings", value: totalReadingsText, color: .green)
+                StatCard(title: "Data Transferred", value: totalDataSizeText, color: .orange)
+                StatCard(title: "Connection Status", value: connectionStatusText, color: connectionStatusColor)
             }
         }
         .padding()
         .background(Color(.systemGray6))
         .cornerRadius(16)
+    }
+    
+    private var totalReadingsText: String {
+        let totalReadings = dataManager.receivedSessions.compactMap { session in
+            dataManager.getSensorData(for: session.id.uuidString)?.count
+        }.reduce(0, +)
+        
+        if totalReadings == 0 {
+            return "0"
+        } else if totalReadings >= 1000 {
+            return String(format: "%.1fK", Double(totalReadings) / 1000.0)
+        } else {
+            return "\(totalReadings)"
+        }
+    }
+    
+    private var totalDataSizeText: String {
+        let totalReadings = dataManager.receivedSessions.compactMap { session in
+            dataManager.getSensorData(for: session.id.uuidString)?.count
+        }.reduce(0, +)
+        
+        let estimatedBytes = totalReadings * 48 // Rough estimate per reading
+        
+        if estimatedBytes == 0 {
+            return "0 KB"
+        } else if estimatedBytes >= 1024 * 1024 {
+            return String(format: "%.1f MB", Double(estimatedBytes) / (1024.0 * 1024.0))
+        } else if estimatedBytes >= 1024 {
+            return String(format: "%.1f KB", Double(estimatedBytes) / 1024.0)
+        } else {
+            return "\(estimatedBytes) B"
+        }
+    }
+    
+    private var connectionStatusText: String {
+        dataManager.isWatchConnected ? "Connected" : "Disconnected"
+    }
+    
+    private var connectionStatusColor: Color {
+        dataManager.isWatchConnected ? .green : .orange
     }
 }
 
@@ -113,63 +152,6 @@ struct StatCard: View {
     }
 }
 
-struct WatchDebugView: View {
-    @ObservedObject private var dataManager = PhoneSessionManager.shared
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Debug Information")
-                .font(.headline)
-                .fontWeight(.semibold)
-            
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Status: \(dataManager.lastReceiveStatus)")
-                    .font(.caption)
-                    .foregroundColor(.primary)
-                
-                Text("Sessions Received: \(dataManager.receivedSessions.count)")
-                    .font(.caption)
-                    .foregroundColor(.primary)
-                
-                if dataManager.isReceivingFile {
-                    HStack {
-                        ProgressView()
-                            .scaleEffect(0.8)
-                        Text("Receiving file...")
-                            .font(.caption)
-                            .foregroundColor(.blue)
-                    }
-                }
-                
-                if !dataManager.fileTransferProgress.isEmpty {
-                    Text("Transfer: \(dataManager.fileTransferProgress)")
-                        .font(.caption)
-                        .foregroundColor(.blue)
-                }
-                
-                if let lastError = dataManager.lastReceiveError {
-                    Text("Last Error: \(lastError.localizedDescription)")
-                        .font(.caption)
-                        .foregroundColor(.red)
-                }
-                
-                Text("Debug Messages:")
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .padding(.top, 4)
-                
-                ForEach(dataManager.debugMessages.prefix(3), id: \.self) { message in
-                    Text("• \(message)")
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(.secondary)
-                }
-            }
-        }
-        .padding()
-        .background(Color(.systemYellow).opacity(0.1))
-        .cornerRadius(16)
-    }
-}
 
 struct WatchConnectionView: View {
     @ObservedObject private var dataManager = PhoneSessionManager.shared
@@ -222,31 +204,47 @@ struct RecentSessionsView: View {
                 
                 Spacer()
                 
-                Button("View All") {
-                    // Navigate to sessions view
+                NavigationLink(destination: DataVisualizationView()) {
+                    Text("View All")
+                        .font(.caption)
+                        .foregroundColor(.blue)
                 }
-                .font(.caption)
             }
             
             if dataManager.receivedSessions.isEmpty {
-                VStack(spacing: 8) {
-                    Text("No sessions yet")
-                        .font(.subheadline)
+                VStack(spacing: 12) {
+                    Image(systemName: "waveform.path.ecg")
+                        .font(.system(size: 32))
                         .foregroundColor(.secondary)
                     
-                    Text("Start a dhikr session on your Apple Watch to see data here")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
+                    VStack(spacing: 4) {
+                        Text("No sensor data yet")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(.primary)
+                        
+                        Text("Transfer data from your Apple Watch to begin analysis")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
                 }
                 .frame(maxWidth: .infinity)
-                .padding()
+                .padding(.vertical, 20)
                 .background(Color(.systemBackground))
                 .cornerRadius(12)
             } else {
                 LazyVStack(spacing: 8) {
                     ForEach(dataManager.receivedSessions.prefix(3)) { session in
-                        SessionRowView(session: session)
+                        EnhancedSessionRowView(session: session)
+                    }
+                    
+                    if dataManager.receivedSessions.count > 3 {
+                        Text("+ \(dataManager.receivedSessions.count - 3) more sessions")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 4)
                     }
                 }
             }
@@ -322,6 +320,96 @@ struct SettingRow: View {
             
             Text(value)
                 .foregroundColor(.secondary)
+        }
+    }
+}
+
+struct EnhancedSessionRowView: View {
+    let session: DhikrSession
+    @ObservedObject private var dataManager = PhoneSessionManager.shared
+    
+    var body: some View {
+        NavigationLink(destination: SessionDetailView(session: session)) {
+            HStack(spacing: 12) {
+                // Data visualization mini chart
+                VStack {
+                    Image(systemName: dataManager.hasSensorData(for: session.id.uuidString) ? "waveform.path.ecg" : "circle.dotted")
+                        .font(.title2)
+                        .foregroundColor(dataManager.hasSensorData(for: session.id.uuidString) ? .green : .secondary)
+                }
+                .frame(width: 40)
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Session \(session.id.uuidString.prefix(8))")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(.primary)
+                        
+                        Spacer()
+                        
+                        Text(relativeTimeString(from: session.startTime))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    HStack(spacing: 16) {
+                        if let sensorData = dataManager.getSensorData(for: session.id.uuidString) {
+                            Label("\(sensorData.count)", systemImage: "waveform")
+                                .font(.caption)
+                                .foregroundColor(.blue)
+                            
+                            Label(String(format: "%.1fs", session.sessionDuration), systemImage: "clock")
+                                .font(.caption)
+                                .foregroundColor(.green)
+                                
+                            Label(dataSizeString(for: sensorData.count), systemImage: "doc.on.doc")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        } else {
+                            Text("No sensor data")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Spacer()
+                        
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            .padding()
+            .background(Color(.systemBackground))
+            .cornerRadius(12)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+    
+    private func relativeTimeString(from date: Date) -> String {
+        let interval = Date().timeIntervalSince(date)
+        
+        if interval < 60 {
+            return "Just now"
+        } else if interval < 3600 {
+            let minutes = Int(interval / 60)
+            return "\(minutes)m ago"
+        } else if interval < 86400 {
+            let hours = Int(interval / 3600)
+            return "\(hours)h ago"
+        } else {
+            let days = Int(interval / 86400)
+            return "\(days)d ago"
+        }
+    }
+    
+    private func dataSizeString(for readingCount: Int) -> String {
+        let bytes = readingCount * 48 // Rough estimate
+        if bytes >= 1024 {
+            return String(format: "%.1fKB", Double(bytes) / 1024.0)
+        } else {
+            return "\(bytes)B"
         }
     }
 }
