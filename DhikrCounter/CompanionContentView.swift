@@ -158,7 +158,7 @@ struct WatchDebugView: View {
                     .fontWeight(.medium)
                     .padding(.top, 4)
                 
-                ForEach(dataManager.debugMessages.prefix(5), id: \.self) { message in
+                ForEach(dataManager.debugMessages.prefix(3), id: \.self) { message in
                     Text("• \(message)")
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundColor(.secondary)

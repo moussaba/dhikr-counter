@@ -63,8 +63,8 @@ class PhoneSessionManager: NSObject, ObservableObject {
         
         DispatchQueue.main.async {
             self.debugMessages.insert(debugMessage, at: 0) // Newest first
-            if self.debugMessages.count > 10 {
-                self.debugMessages.removeLast() // Keep only last 10
+            if self.debugMessages.count > 3 {
+                self.debugMessages.removeLast() // Keep only last 3
             }
         }
         print("📱 DEBUG: \(debugMessage)")
@@ -298,16 +298,21 @@ extension PhoneSessionManager: WCSessionDelegate {
                     self.storedSensorData[sessionIdString] = sessionData.sensorData
                     self.storedDetectionEvents[sessionIdString] = sessionData.detectionEvents
                     
-                    // Create session for display
+                    self.addDebugMessage("📊 Stored sensor data for session ID: \(sessionIdString)")
+                    
+                    // Create session for display using the original session ID
                     let startTime = sessionData.sensorData.first?.timestamp ?? Date()
                     let endTime = sessionData.sensorData.last?.timestamp ?? Date()
                     
-                    let tempSession = DhikrSession(startTime: startTime)
-                    let session = tempSession.completed(
-                        at: endTime,
+                    // Use the private initializer by creating via the extension static method pattern
+                    let session = DhikrSession.createWithId(
+                        id: sessionData.sessionId,
+                        startTime: startTime,
+                        endTime: endTime,
                         totalPinches: sessionData.detectionEvents.count,
                         detectedPinches: sessionData.detectionEvents.count,
                         manualCorrections: 0,
+                        sessionDuration: endTime.timeIntervalSince(startTime),
                         notes: "File transfer session - \(sessionData.sensorData.count) readings"
                     )
                     
