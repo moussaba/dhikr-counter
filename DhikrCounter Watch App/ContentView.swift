@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var detectionEngine: DhikrDetectionEngine
+    @ObservedObject private var sessionManager = WatchSessionManager.shared
     
     var body: some View {
         VStack(spacing: 8) {
@@ -13,7 +14,7 @@ struct ContentView: View {
                 .layoutPriority(0) // Can shrink if needed
             
             // Data transfer status (when active)
-            if detectionEngine.dataManager.isTransferring {
+            if sessionManager.isTransferring {
                 DataTransferStatusView()
                     .layoutPriority(1)
             }
@@ -68,7 +69,7 @@ struct SessionInfoView: View {
 }
 
 struct DataTransferStatusView: View {
-    @EnvironmentObject var detectionEngine: DhikrDetectionEngine
+    @ObservedObject private var sessionManager = WatchSessionManager.shared
     
     var body: some View {
         VStack(spacing: 4) {
@@ -80,11 +81,11 @@ struct DataTransferStatusView: View {
                     .foregroundColor(.blue)
             }
             
-            ProgressView(value: detectionEngine.dataManager.transferProgress)
+            ProgressView()
                 .progressViewStyle(LinearProgressViewStyle(tint: .blue))
                 .scaleEffect(y: 1.5)
             
-            Text(detectionEngine.dataManager.transferStatus)
+            Text(sessionManager.transferStatus)
                 .font(.caption2)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)

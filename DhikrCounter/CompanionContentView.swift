@@ -56,6 +56,9 @@ struct DashboardView: View {
                     // Watch connection status
                     WatchConnectionView()
                     
+                    // Debug information
+                    WatchDebugView()
+                    
                     // Recent sessions
                     RecentSessionsView()
                 }
@@ -110,8 +113,50 @@ struct StatCard: View {
     }
 }
 
+struct WatchDebugView: View {
+    @ObservedObject private var dataManager = PhoneSessionManager.shared
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Debug Information")
+                .font(.headline)
+                .fontWeight(.semibold)
+            
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Status: \(dataManager.lastReceiveStatus)")
+                    .font(.caption)
+                    .foregroundColor(.primary)
+                
+                Text("Sessions Received: \(dataManager.receivedSessions.count)")
+                    .font(.caption)
+                    .foregroundColor(.primary)
+                
+                if let lastError = dataManager.lastReceiveError {
+                    Text("Last Error: \(lastError.localizedDescription)")
+                        .font(.caption)
+                        .foregroundColor(.red)
+                }
+                
+                Text("Debug Messages:")
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .padding(.top, 4)
+                
+                ForEach(dataManager.debugMessages.prefix(5), id: \.self) { message in
+                    Text("• \(message)")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .padding()
+        .background(Color(.systemYellow).opacity(0.1))
+        .cornerRadius(16)
+    }
+}
+
 struct WatchConnectionView: View {
-    @ObservedObject private var dataManager = PhoneDataManager.shared
+    @ObservedObject private var dataManager = PhoneSessionManager.shared
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -131,7 +176,8 @@ struct WatchConnectionView: View {
                 
                 if !dataManager.isWatchConnected {
                     Button("Retry") {
-                        // WCSession activation happens automatically
+                        // Force reactivation and status check
+                        dataManager.forceConnectionCheck()
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
@@ -149,7 +195,7 @@ struct WatchConnectionView: View {
 }
 
 struct RecentSessionsView: View {
-    @ObservedObject private var dataManager = PhoneDataManager.shared
+    @ObservedObject private var dataManager = PhoneSessionManager.shared
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
