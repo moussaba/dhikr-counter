@@ -131,6 +131,22 @@ struct WatchDebugView: View {
                     .font(.caption)
                     .foregroundColor(.primary)
                 
+                if dataManager.isReceivingFile {
+                    HStack {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                        Text("Receiving file...")
+                            .font(.caption)
+                            .foregroundColor(.blue)
+                    }
+                }
+                
+                if !dataManager.fileTransferProgress.isEmpty {
+                    Text("Transfer: \(dataManager.fileTransferProgress)")
+                        .font(.caption)
+                        .foregroundColor(.blue)
+                }
+                
                 if let lastError = dataManager.lastReceiveError {
                     Text("Last Error: \(lastError.localizedDescription)")
                         .font(.caption)

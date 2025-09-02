@@ -10,6 +10,8 @@ class PhoneSessionManager: NSObject, ObservableObject {
     @Published var lastReceiveStatus: String = "Initializing..."
     @Published var lastReceiveError: Error?
     @Published var debugMessages: [String] = []
+    @Published var isReceivingFile: Bool = false
+    @Published var fileTransferProgress: String = ""
     
     // Data storage
     private var storedSensorData: [String: [SensorReading]] = [:]
@@ -165,6 +167,27 @@ extension PhoneSessionManager: WCSessionDelegate {
         }
     }
     
+    nonisolated func session(_ session: WCSession, didReceive file: WCSessionFile) {
+        Task { @MainActor in
+            self.addDebugMessage("📁 Received file: \(file.fileURL.lastPathComponent)")
+            self.addDebugMessage("📁 File metadata: \(file.metadata ?? [:])")
+            
+            self.isReceivingFile = true
+            self.fileTransferProgress = "Processing received file..."
+            
+            guard let metadata = file.metadata,
+                  let type = metadata["type"] as? String,
+                  type == "sessionFile" else {
+                self.addDebugMessage("❌ Invalid file metadata - not a session file")
+                self.isReceivingFile = false
+                self.lastReceiveStatus = "❌ Invalid file metadata"
+                return
+            }
+            
+            self.handleSessionFile(file, metadata: metadata)
+        }
+    }
+    
     private func handleUserInfoSessionData(_ userInfo: [String: Any]) {
         addDebugMessage("Processing sessionData userInfo...")
         
@@ -217,6 +240,87 @@ extension PhoneSessionManager: WCSessionDelegate {
             }
         }
     }
+    
+    private func handleSessionFile(_ file: WCSessionFile, metadata: [String: Any]) {
+        addDebugMessage("📁 Processing session file...")
+        
+        guard let sessionIdString = metadata["sessionId"] as? String,
+              let sessionId = UUID(uuidString: sessionIdString),
+              let sensorCountString = metadata["sensorDataCount"] as? String,
+              let sensorCount = Int(sensorCountString),
+              let fileSizeString = metadata["fileSize"] as? String,
+              let fileSize = Int(fileSizeString) else {
+            addDebugMessage("❌ Invalid file metadata format")
+            DispatchQueue.main.async {
+                self.isReceivingFile = false
+                self.lastReceiveStatus = "❌ Invalid file metadata"
+            }
+            return
+        }
+        
+        addDebugMessage("📁 File details - SessionId: \(sessionIdString), Readings: \(sensorCount), Size: \(ByteCountFormatter.string(fromByteCount: Int64(fileSize), countStyle: .file))")
+        
+        // Process file in background
+        Task {
+            do {
+                let sessionData = try await processSessionFile(at: file.fileURL)
+                
+                await MainActor.run {
+                    // Store the data
+                    self.storedSensorData[sessionIdString] = sessionData.sensorData
+                    self.storedDetectionEvents[sessionIdString] = sessionData.detectionEvents
+                    
+                    // Create session for display
+                    let startTime = sessionData.sensorData.first?.timestamp ?? Date()
+                    let endTime = sessionData.sensorData.last?.timestamp ?? Date()
+                    
+                    let tempSession = DhikrSession(startTime: startTime)
+                    let session = tempSession.completed(
+                        at: endTime,
+                        totalPinches: sessionData.detectionEvents.count,
+                        detectedPinches: sessionData.detectionEvents.count,
+                        manualCorrections: 0,
+                        notes: "File transfer session - \(sessionData.sensorData.count) readings"
+                    )
+                    
+                    self.receivedSessions.append(session)
+                    self.lastReceiveStatus = "✅ Received file: \(sessionData.sensorData.count) readings (\(ByteCountFormatter.string(fromByteCount: Int64(fileSize), countStyle: .file)))"
+                    self.isReceivingFile = false
+                    self.fileTransferProgress = ""
+                    
+                    let successMessage = "✅ Successfully processed file: \(sessionData.sensorData.count) sensor readings, \(sessionData.detectionEvents.count) events"
+                    self.addDebugMessage(successMessage)
+                }
+                
+            } catch {
+                await MainActor.run {
+                    let errorMessage = "Error processing session file: \(error.localizedDescription)"
+                    self.addDebugMessage(errorMessage)
+                    self.lastReceiveStatus = "❌ File processing error: \(error.localizedDescription)"
+                    self.isReceivingFile = false
+                    self.fileTransferProgress = ""
+                }
+            }
+        }
+    }
+    
+    private func processSessionFile(at url: URL) async throws -> SessionData {
+        let data = try Data(contentsOf: url)
+        
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        
+        return try decoder.decode(SessionData.self, from: data)
+    }
+}
+
+// MARK: - Data Structures
+
+private struct SessionData: Codable {
+    let sessionId: UUID
+    let timestamp: TimeInterval
+    let sensorData: [SensorReading]
+    let detectionEvents: [DetectionEvent]
 }
 
 extension DateFormatter {

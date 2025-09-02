@@ -9,7 +9,13 @@ class WatchSessionManager: NSObject, ObservableObject {
     @Published var isTransferring: Bool = false
     @Published var lastTransferError: Error?
     
-    private var pendingUserInfos: [[String: Any]] = []
+    private var pendingTransfers: [PendingTransfer] = []
+    
+    private struct PendingTransfer {
+        let sensorData: [SensorReading]
+        let detectionEvents: [DetectionEvent]
+        let sessionId: UUID
+    }
     
     private override init() {
         super.init()
@@ -38,40 +44,83 @@ class WatchSessionManager: NSObject, ObservableObject {
     }
     
     func transferSensorData(sensorData: [SensorReading], detectionEvents: [DetectionEvent], sessionId: UUID) {
-        print("⌚ Transfer requested for \(sensorData.count) readings")
+        print("⌚ Transfer requested for \(sensorData.count) readings via transferFile")
         
-        do {
-            let sensorDataEncoded = try JSONEncoder().encode(sensorData)
-            let detectionEventsEncoded = try JSONEncoder().encode(detectionEvents)
-            
-            let sessionData: [String: Any] = [
-                "type": "sessionData",
-                "sessionId": sessionId.uuidString,
-                "sensorDataCount": sensorData.count,
-                "detectionEventCount": detectionEvents.count,
-                "timestamp": Date().timeIntervalSince1970,
-                "sensorData": sensorDataEncoded,
-                "detectionEvents": detectionEventsEncoded
-            ]
-            
-            let session = WCSession.default
-            guard session.activationState == .activated else {
-                print("⌚ Session not activated - queuing transfer")
-                pendingUserInfos.append(sessionData)
-                transferStatus = "Queued - waiting for activation (\(pendingUserInfos.count) pending)"
-                return
+        let session = WCSession.default
+        guard session.activationState == .activated else {
+            print("⌚ Session not activated - queuing transfer")
+            let pendingTransfer = PendingTransfer(sensorData: sensorData, detectionEvents: detectionEvents, sessionId: sessionId)
+            pendingTransfers.append(pendingTransfer)
+            transferStatus = "Queued - waiting for activation (\(pendingTransfers.count) pending)"
+            return
+        }
+        
+        Task {
+            do {
+                try await performFileTransfer(sensorData: sensorData, detectionEvents: detectionEvents, sessionId: sessionId)
+            } catch {
+                await MainActor.run {
+                    self.transferStatus = "Transfer error: \(error.localizedDescription)"
+                    self.lastTransferError = error
+                }
+                print("❌ Transfer error: \(error)")
             }
-            
-            session.transferUserInfo(sessionData)
-            transferStatus = "Data transferred (\(sensorData.count) readings)"
-            print("⌚ transferUserInfo called successfully")
-            
-        } catch {
-            transferStatus = "Encoding error: \(error.localizedDescription)"
-            lastTransferError = error
-            print("❌ Transfer encoding error: \(error)")
         }
     }
+    
+    private func performFileTransfer(sensorData: [SensorReading], detectionEvents: [DetectionEvent], sessionId: UUID) async throws {
+        // Create session data structure
+        let sessionData = SessionData(
+            sessionId: sessionId,
+            timestamp: Date().timeIntervalSince1970,
+            sensorData: sensorData,
+            detectionEvents: detectionEvents
+        )
+        
+        // Encode to JSON
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let jsonData = try encoder.encode(sessionData)
+        
+        // Create temporary file
+        let tempDir = FileManager.default.temporaryDirectory
+        let fileName = "session_\(sessionId.uuidString)_\(Int(Date().timeIntervalSince1970)).json"
+        let fileURL = tempDir.appendingPathComponent(fileName)
+        
+        try jsonData.write(to: fileURL)
+        print("⌚ Created temp file: \(fileURL.path)")
+        print("⌚ File size: \(ByteCountFormatter.string(fromByteCount: Int64(jsonData.count), countStyle: .file))")
+        
+        // Transfer file
+        let metadata = [
+            "type": "sessionFile",
+            "sessionId": sessionId.uuidString,
+            "sensorDataCount": String(sensorData.count),
+            "detectionEventCount": String(detectionEvents.count),
+            "timestamp": String(sessionData.timestamp),
+            "fileSize": String(jsonData.count)
+        ]
+        
+        WCSession.default.transferFile(fileURL, metadata: metadata)
+        
+        await MainActor.run {
+            self.isTransferring = true
+            self.transferStatus = "File transfer initiated (\(sensorData.count) readings, \(ByteCountFormatter.string(fromByteCount: Int64(jsonData.count), countStyle: .file)))"
+        }
+        
+        print("⌚ transferFile called successfully with metadata: \(metadata)")
+    }
+}
+
+// MARK: - WCSessionDelegate
+
+// MARK: - Data Structures
+
+private struct SessionData: Codable {
+    let sessionId: UUID
+    let timestamp: TimeInterval
+    let sensorData: [SensorReading]
+    let detectionEvents: [DetectionEvent]
 }
 
 // MARK: - WCSessionDelegate
@@ -86,15 +135,26 @@ extension WatchSessionManager: WCSessionDelegate {
             switch activationState {
             case .activated:
                 self.transferStatus = "WCSession activated successfully"
-                print("✅ WCSession activated - flushing \(self.pendingUserInfos.count) queued transfers")
+                print("✅ WCSession activated - flushing \(self.pendingTransfers.count) queued transfers")
                 
                 // Flush queued transfers
-                if !self.pendingUserInfos.isEmpty {
-                    for userInfo in self.pendingUserInfos {
-                        WCSession.default.transferUserInfo(userInfo)
-                        print("⌚ Flushed queued transfer")
+                if !self.pendingTransfers.isEmpty {
+                    print("⌚ Flushing \(self.pendingTransfers.count) queued file transfers")
+                    for pendingTransfer in self.pendingTransfers {
+                        Task {
+                            do {
+                                try await self.performFileTransfer(
+                                    sensorData: pendingTransfer.sensorData,
+                                    detectionEvents: pendingTransfer.detectionEvents,
+                                    sessionId: pendingTransfer.sessionId
+                                )
+                                print("⌚ Flushed queued file transfer for session \(pendingTransfer.sessionId)")
+                            } catch {
+                                print("❌ Error flushing queued transfer: \(error)")
+                            }
+                        }
                     }
-                    self.pendingUserInfos.removeAll()
+                    self.pendingTransfers.removeAll()
                 }
                 
             case .inactive:
@@ -122,5 +182,30 @@ extension WatchSessionManager: WCSessionDelegate {
         // Handle messages from iPhone (acknowledgments, etc.)
         print("⌚ Received message from iPhone: \(message)")
         replyHandler(["status": "received"])
+    }
+    
+    nonisolated func session(_ session: WCSession, didFinish fileTransfer: WCSessionFileTransfer, error: Error?) {
+        DispatchQueue.main.async {
+            if let error = error {
+                self.transferStatus = "File transfer failed: \(error.localizedDescription)"
+                self.lastTransferError = error
+                self.isTransferring = false
+                print("❌ File transfer failed: \(error)")
+            } else {
+                self.transferStatus = "✅ File transfer completed successfully"
+                self.isTransferring = false
+                print("✅ File transfer completed successfully")
+                
+                // Clean up temporary file
+                if FileManager.default.fileExists(atPath: fileTransfer.file.fileURL.path) {
+                    do {
+                        try FileManager.default.removeItem(at: fileTransfer.file.fileURL)
+                        print("⌚ Cleaned up temporary file: \(fileTransfer.file.fileURL.path)")
+                    } catch {
+                        print("⚠️ Failed to clean up temporary file: \(error)")
+                    }
+                }
+            }
+        }
     }
 }
