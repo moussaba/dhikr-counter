@@ -34,81 +34,132 @@ struct DataVisualizationView: View {
 }
 
 struct TimelineVisualizationView: View {
+    @ObservedObject private var dataManager = PhoneSessionManager.shared
+    
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
-                // Timeline visualization placeholder
-                VStack(spacing: 16) {
-                    Text("Sensor Timeline Visualization")
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                    
-                    // Mock timeline chart
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color(.systemGray6))
-                        .frame(height: 200)
-                        .overlay(
-                            VStack(spacing: 8) {
-                                Image(systemName: "chart.line.uptrend.xyaxis")
-                                    .font(.system(size: 40))
-                                    .foregroundColor(.secondary)
-                                
-                                Text("Timeline Visualization")
-                                    .font(.headline)
-                                    .foregroundColor(.primary)
-                                
-                                Text("Real-time sensor data timeline with detection markers")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .multilineTextAlignment(.center)
-                            }
-                        )
-                    
-                    Text("Shows accelerometer and gyroscope traces with pinch detection overlays")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-                .padding()
-                .background(Color(.systemBackground))
-                .cornerRadius(16)
+                // Recent sensor data display
+                RecentSensorDataView()
                 
                 // Detection events list
                 DetectionEventsListView()
                 
-                // Implementation note
-                VStack(spacing: 8) {
-                    Text("Phase 3 Implementation")
-                        .font(.headline)
-                        .foregroundColor(.primary)
-                    
-                    Text("Timeline visualization with Charts framework and WatchConnectivity data transfer coming in Phase 3")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-                .padding()
-                .background(Color(.systemGray6))
-                .cornerRadius(16)
+                // Raw sensor data stats
+                SensorDataStatsView()
             }
             .padding()
         }
     }
 }
 
+struct RecentSensorDataView: View {
+    @ObservedObject private var dataManager = PhoneSessionManager.shared
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Recent Sensor Data")
+                .font(.headline)
+                .fontWeight(.semibold)
+            
+            if dataManager.receivedSessions.isEmpty {
+                VStack(spacing: 8) {
+                    Text("No sensor data received")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    
+                    Text("Start a session on your Apple Watch and tap Stop to see sensor data here")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(Color(.systemGray6))
+                .cornerRadius(12)
+            } else {
+                LazyVStack(spacing: 8) {
+                    ForEach(dataManager.receivedSessions.prefix(3)) { session in
+                        SensorSessionRowView(session: session)
+                    }
+                }
+            }
+        }
+        .padding()
+        .background(Color(.systemBackground))
+        .cornerRadius(16)
+    }
+}
+
+struct SensorSessionRowView: View {
+    let session: DhikrSession
+    
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Session \(session.id.uuidString.prefix(8))")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                
+                Text(DateFormatter.sessionFormatter.string(from: session.startTime))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                
+                if let notes = session.sessionNotes, notes.contains("sensor readings") {
+                    let readingCount = notes.split(separator: " ").first(where: { $0.allSatisfy { $0.isNumber } }) ?? "0"
+                    Text("\(readingCount) sensor readings")
+                        .font(.caption)
+                        .foregroundColor(.blue)
+                }
+            }
+            
+            Spacer()
+            
+            Image(systemName: "waveform.path.ecg")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .padding()
+        .background(Color(.systemGray6))
+        .cornerRadius(12)
+    }
+}
+
+struct SensorDataStatsView: View {
+    @ObservedObject private var dataManager = PhoneSessionManager.shared
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Sensor Data Statistics")
+                .font(.headline)
+                .fontWeight(.semibold)
+            
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 12) {
+                StatCard(title: "Sessions Received", value: "\(dataManager.receivedSessions.count)", color: .blue)
+                StatCard(title: "Transfer Status", value: dataManager.isWatchConnected ? "Connected" : "Disconnected", color: dataManager.isWatchConnected ? .green : .orange)
+                StatCard(title: "Last Transfer", value: dataManager.receivedSessions.isEmpty ? "None" : "Recently", color: .purple)
+                StatCard(title: "Debug Messages", value: "\(dataManager.debugMessages.count)", color: .gray)
+            }
+        }
+        .padding()
+        .background(Color(.systemBackground))
+        .cornerRadius(16)
+    }
+}
+
 struct DetectionEventsListView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Detection Events")
+            Text("Raw Data Mode")
                 .font(.headline)
                 .fontWeight(.semibold)
             
             VStack(spacing: 8) {
-                Text("No detection events")
+                Text("Detection disabled - collecting raw sensor data only")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                 
-                Text("Detection events will appear here after importing data from Apple Watch")
+                Text("The Watch app is configured to send raw accelerometer and gyroscope readings for research analysis")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)

@@ -27,8 +27,10 @@
 		<string>workout-processing</string>
 	</array>
 	<key>WKWatchOnly</key>
-	<true/>
+	<false/>
 	<key>WKApplication</key>
 	<true/>
+	<key>WKCompanionAppBundleIdentifier</key>
+	<string>com.fuutaworks.DhikrCounter</string>
 </dict>
 </plist>

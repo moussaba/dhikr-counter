@@ -4,6 +4,7 @@ import WatchKit
 
 class DhikrDetectionEngine: ObservableObject {
     private let motionManager = CMMotionManager()
+    private let motionActivityManager = CMMotionActivityManager()
     
     // Researcher's validated parameters
     private let accelerationThreshold: Double = 0.05
@@ -43,8 +44,12 @@ class DhikrDetectionEngine: ObservableObject {
     private var detectionEventLog: [DetectionEvent] = []
     private var currentSessionId: UUID?
     
-    // WatchConnectivity integration
-    @Published var dataManager = WatchDataManager()
+    // WatchConnectivity integration  
+    private let sessionManager = WatchSessionManager.shared
+    
+    init() {
+        // WCSession is automatically initialized by singleton
+    }
     
     enum SessionState: String {
         case inactive
@@ -63,8 +68,43 @@ class DhikrDetectionEngine: ObservableObject {
     }
     
     func startSession() {
-        print("🟢 toggleSession() called - attempting to start session")
+        print("🟢 Start session called - starting raw sensor data collection")
         
+        // Request motion authorization first
+        requestMotionPermission { [weak self] authorized in
+            DispatchQueue.main.async {
+                if authorized {
+                    self?.startRawDataCollection()
+                } else {
+                    print("⚠️ Motion permission denied")
+                    // Still allow session to start but log warning
+                    self?.startRawDataCollection()
+                }
+            }
+        }
+    }
+    
+    private func requestMotionPermission(completion: @escaping (Bool) -> Void) {
+        // Check if motion activity is available (this triggers permission prompt)
+        if CMMotionActivityManager.isActivityAvailable() {
+            let now = Date()
+            let past = now.addingTimeInterval(-1) // 1 second ago
+            motionActivityManager.queryActivityStarting(from: past, to: now, to: OperationQueue.main) { _, error in
+                if let error = error {
+                    print("Motion permission error: \(error.localizedDescription)")
+                    completion(false)
+                } else {
+                    print("✅ Motion permission granted")
+                    completion(true)
+                }
+            }
+        } else {
+            print("ℹ️ Motion activity not available, proceeding without activity permission")
+            completion(true)
+        }
+    }
+    
+    private func startRawDataCollection() {
         if !motionManager.isDeviceMotionAvailable {
             print("⚠️ Device motion not available - likely simulator limitation")
             print("🟡 Starting session in simulator mode (motion disabled)")
@@ -108,7 +148,7 @@ class DhikrDetectionEngine: ObservableObject {
                 }
                 return 
             }
-            self.processMotionData(motion)
+            self.collectRawSensorData(motion)
         }
         
         // Provide haptic feedback for session start
@@ -116,8 +156,17 @@ class DhikrDetectionEngine: ObservableObject {
     }
     
     func stopSession() {
-        print("Stopping dhikr session")
+        print("Stopping sensor data collection session")
         motionManager.stopDeviceMotionUpdates()
+        
+        // Log some collected data before transfer
+        print("⌚ Collected \(sensorDataLog.count) sensor readings")
+        if sensorDataLog.count > 0 {
+            let first = sensorDataLog[0]
+            let last = sensorDataLog[sensorDataLog.count - 1]
+            print("⌚ First reading - Accel: (\(first.userAcceleration.x), \(first.userAcceleration.y), \(first.userAcceleration.z)), Gyro: (\(first.rotationRate.x), \(first.rotationRate.y), \(first.rotationRate.z))")
+            print("⌚ Last reading - Accel: (\(last.userAcceleration.x), \(last.userAcceleration.y), \(last.userAcceleration.z)), Gyro: (\(last.rotationRate.x), \(last.rotationRate.y), \(last.rotationRate.z))")
+        }
         
         // Transfer session data to iPhone before stopping
         if let sessionId = currentSessionId {
@@ -139,37 +188,36 @@ class DhikrDetectionEngine: ObservableObject {
         WKInterfaceDevice.current().play(.click)
     }
     
-    // MARK: - Core Detection Algorithm Implementation
+    // MARK: - Raw Sensor Data Collection
     
-    private func processMotionData(_ motion: CMDeviceMotion) {
+    private func collectRawSensorData(_ motion: CMDeviceMotion) {
         let currentTime = Date()
         
-        // Extract sensor data
+        // Extract raw sensor data
         let userAccel = motion.userAcceleration
         let rotationRate = motion.rotationRate
         
-        // Compute magnitudes
-        let accelMag = sqrt(userAccel.x*userAccel.x + userAccel.y*userAccel.y + userAccel.z*userAccel.z)
-        let gyroMag = sqrt(rotationRate.x*rotationRate.x + rotationRate.y*rotationRate.y + rotationRate.z*rotationRate.z)
+        // Create sensor reading for data logging
+        let sensorReading = SensorReading(
+            timestamp: currentTime,
+            userAcceleration: SIMD3<Double>(userAccel.x, userAccel.y, userAccel.z),
+            rotationRate: SIMD3<Double>(rotationRate.x, rotationRate.y, rotationRate.z),
+            activityIndex: 0.0, // No activity analysis needed
+            detectionScore: nil, // No detection scores
+            sessionState: SensorReading.SessionState(rawValue: sessionState.rawValue) ?? .inactive
+        )
         
-        // Update sliding buffers
-        updateBuffers(acceleration: accelMag, gyroscope: gyroMag, time: currentTime)
+        // Log sensor data
+        logSensorData(accel: userAccel, gyro: rotationRate, activityIndex: 0.0, time: currentTime)
         
-        // Compute activity index for session state management
-        let activityIndex = computeActivityIndex()
-        
-        // Dispatch UI updates to main queue
+        // Simple state management - just go to active after setup delay
         DispatchQueue.main.async { [weak self] in
-            self?.updateSessionState(activityIndex: activityIndex)
+            if self?.sessionState == .setup {
+                self?.sessionState = .activeDhikr
+            }
         }
         
-        // Only detect pinches during active dhikr state
-        if sessionState == .activeDhikr {
-            detectPinch(acceleration: accelMag, gyroscope: gyroMag, time: currentTime)
-        }
-        
-        // Log data for development
-        logSensorData(accel: userAccel, gyro: rotationRate, activityIndex: activityIndex, time: currentTime)
+        // No pinch detection - just collect raw sensor data
     }
     
     private func updateBuffers(acceleration: Double, gyroscope: Double, time: Date) {
@@ -258,19 +306,23 @@ class DhikrDetectionEngine: ObservableObject {
         // Update acceleration statistics
         if accelerationBuffer.count >= minBufferSizeForStats {
             let sortedAccel = accelerationBuffer.sorted()
-            runningAccelMedian = sortedAccel[sortedAccel.count / 2]
+            let medianIndex = max(0, min(sortedAccel.count / 2, sortedAccel.count - 1))
+            runningAccelMedian = sortedAccel[medianIndex]
             
             let accelDeviations = accelerationBuffer.map { abs($0 - runningAccelMedian) }.sorted()
-            runningAccelMAD = accelDeviations[accelDeviations.count / 2]
+            let madIndex = max(0, min(accelDeviations.count / 2, accelDeviations.count - 1))
+            runningAccelMAD = accelDeviations[madIndex]
         }
         
         // Update gyroscope statistics
         if gyroscopeBuffer.count >= minBufferSizeForStats {
             let sortedGyro = gyroscopeBuffer.sorted()
-            runningGyroMedian = sortedGyro[sortedGyro.count / 2]
+            let medianIndex = max(0, min(sortedGyro.count / 2, sortedGyro.count - 1))
+            runningGyroMedian = sortedGyro[medianIndex]
             
             let gyroDeviations = gyroscopeBuffer.map { abs($0 - runningGyroMedian) }.sorted()
-            runningGyroMAD = gyroDeviations[gyroDeviations.count / 2]
+            let madIndex = max(0, min(gyroDeviations.count / 2, gyroDeviations.count - 1))
+            runningGyroMAD = gyroDeviations[madIndex]
         }
     }
     
@@ -279,7 +331,7 @@ class DhikrDetectionEngine: ObservableObject {
         
         let sortedScores = scoreBuffer.sorted()
         let percentileIndex = Int(Double(sortedScores.count) * 0.90)
-        let safeIndex = min(percentileIndex, sortedScores.count - 1)
+        let safeIndex = max(0, min(percentileIndex, sortedScores.count - 1))
         
         return sortedScores[safeIndex]
     }
@@ -412,15 +464,14 @@ class DhikrDetectionEngine: ObservableObject {
         // Create session metadata
         let session = createSessionSummary(sessionId: sessionId)
         
-        // Transfer metadata first
-        dataManager.transferSessionMetadata(session: session)
-        
         // Transfer sensor data and detection events
-        dataManager.transferSessionData(
-            sensorData: sensorDataLog,
-            detectionEvents: detectionEventLog,
-            sessionId: sessionId
-        )
+        Task { @MainActor in
+            sessionManager.transferSensorData(
+                sensorData: sensorDataLog,
+                detectionEvents: detectionEventLog,
+                sessionId: sessionId
+            )
+        }
         
         print("Initiated data transfer for session \(sessionId)")
     }
