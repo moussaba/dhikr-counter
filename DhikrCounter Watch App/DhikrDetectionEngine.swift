@@ -1,6 +1,7 @@
 import SwiftUI
 import CoreMotion
 import WatchKit
+import HealthKit
 
 class DhikrDetectionEngine: ObservableObject {
     private let motionManager = CMMotionManager()
@@ -43,6 +44,13 @@ class DhikrDetectionEngine: ObservableObject {
     private var sensorDataLog: [SensorReading] = []
     private var detectionEventLog: [DetectionEvent] = []
     private var currentSessionId: UUID?
+    
+    // High-resolution timestamp management
+    private var startEpoch: TimeInterval = 0
+    
+    // Background session management (HealthKit)
+    private var healthStore = HKHealthStore()
+    private var workoutSession: HKWorkoutSession?
     
     // WatchConnectivity integration  
     private let sessionManager = WatchSessionManager.shared
@@ -138,10 +146,16 @@ class DhikrDetectionEngine: ObservableObject {
         // Clear previous session data
         clearLogs()
         
+        // Start background session to prevent watchOS suspension
+        startWorkoutSession()
+        
         motionManager.deviceMotionUpdateInterval = 1.0 / samplingRate
         motionManager.showsDeviceMovementDisplay = true
         
-        motionManager.startDeviceMotionUpdates(to: OperationQueue()) { [weak self] motion, error in
+        // Align epoch with Core Motion timestamp (seconds since boot)
+        startEpoch = Date().timeIntervalSince1970 - ProcessInfo.processInfo.systemUptime
+        
+        motionManager.startDeviceMotionUpdates(using: .xArbitraryCorrectedZVertical, to: OperationQueue()) { [weak self] motion, error in
             guard let self = self, let motion = motion else { 
                 if let error = error {
                     print("Motion update error: \(error.localizedDescription)")
@@ -177,6 +191,9 @@ class DhikrDetectionEngine: ObservableObject {
         sessionStartTime = nil
         currentSessionId = nil
         
+        // Stop background session
+        stopWorkoutSession()
+        
         // Provide haptic feedback for session stop
         WKInterfaceDevice.current().play(.stop)
     }
@@ -193,22 +210,38 @@ class DhikrDetectionEngine: ObservableObject {
     private func collectRawSensorData(_ motion: CMDeviceMotion) {
         let currentTime = Date()
         
-        // Extract raw sensor data
-        let userAccel = motion.userAcceleration
-        let rotationRate = motion.rotationRate
+        // High-res relative time (s since boot) - as per guide requirements
+        let motionTimestamp = motion.timestamp
+        // Absolute epoch time in seconds (Double)
+        let epochTimestamp = startEpoch + motionTimestamp
         
-        // Create sensor reading for data logging
+        // Extract all required sensor data as per guide
+        let userAccel = motion.userAcceleration
+        let gravity = motion.gravity          // Added gravity data
+        let rotationRate = motion.rotationRate
+        let attitude = motion.attitude.quaternion  // Added attitude quaternions
+        
+        // Create sensor reading for data logging with all required fields
         let sensorReading = SensorReading(
             timestamp: currentTime,
+            motionTimestamp: motionTimestamp,     // High-resolution CMDeviceMotion timestamp
+            epochTimestamp: epochTimestamp,       // Absolute epoch time
             userAcceleration: SIMD3<Double>(userAccel.x, userAccel.y, userAccel.z),
+            gravity: SIMD3<Double>(gravity.x, gravity.y, gravity.z),  // Added gravity
             rotationRate: SIMD3<Double>(rotationRate.x, rotationRate.y, rotationRate.z),
+            attitude: SIMD4<Double>(attitude.w, attitude.x, attitude.y, attitude.z),  // Added attitude
             activityIndex: 0.0, // No activity analysis needed
             detectionScore: nil, // No detection scores
             sessionState: SensorReading.SessionState(rawValue: sessionState.rawValue) ?? .inactive
         )
         
-        // Log sensor data
-        logSensorData(accel: userAccel, gyro: rotationRate, activityIndex: 0.0, time: currentTime)
+        // Log sensor data using the complete sensor reading
+        sensorDataLog.append(sensorReading)
+        
+        // Maintain reasonable log size
+        if sensorDataLog.count > maxLogSize {
+            sensorDataLog.removeFirst()
+        }
         
         // Simple state management - just go to active after setup delay
         DispatchQueue.main.async { [weak self] in
@@ -422,11 +455,15 @@ class DhikrDetectionEngine: ObservableObject {
     
     // MARK: - Data Logging for Development
     
-    private func logSensorData(accel: CMAcceleration, gyro: CMRotationRate, activityIndex: Double, time: Date) {
+    private func logSensorData(accel: CMAcceleration, gyro: CMRotationRate, gravity: CMAcceleration, attitude: CMQuaternion, motionTimestamp: Double, epochTimestamp: Double, activityIndex: Double, time: Date) {
         let reading = SensorReading(
             timestamp: time,
+            motionTimestamp: motionTimestamp,
+            epochTimestamp: epochTimestamp,
             userAcceleration: SIMD3(accel.x, accel.y, accel.z),
+            gravity: SIMD3(gravity.x, gravity.y, gravity.z),
             rotationRate: SIMD3(gyro.x, gyro.y, gyro.z),
+            attitude: SIMD4(attitude.w, attitude.x, attitude.y, attitude.z),
             activityIndex: activityIndex,
             detectionScore: scoreBuffer.last,
             sessionState: SensorReading.SessionState(rawValue: sessionState.rawValue) ?? .inactive
@@ -508,6 +545,17 @@ class DhikrDetectionEngine: ObservableObject {
         return (sensorDataLog, detectionEventLog)
     }
     
+    // Export sensor data as CSV string (compatible with guide format)
+    func exportCSVData() -> String {
+        guard !sensorDataLog.isEmpty else { return "" }
+        
+        var csvContent = SensorReading.csvHeader + "\n"
+        for reading in sensorDataLog {
+            csvContent += reading.csvRow() + "\n"
+        }
+        return csvContent
+    }
+    
     func clearLogs() {
         sensorDataLog.removeAll()
         detectionEventLog.removeAll()
@@ -532,6 +580,29 @@ class DhikrDetectionEngine: ObservableObject {
         else if pinchCount < 66 { return 66 }
         else if pinchCount < 100 { return 100 }
         else { return 100 }
+    }
+    
+    // MARK: - Background Session Management (HealthKit)
+    
+    private func startWorkoutSession() {
+        let cfg = HKWorkoutConfiguration()
+        cfg.activityType = .other
+        cfg.locationType = .indoor
+        
+        do {
+            workoutSession = try HKWorkoutSession(healthStore: healthStore, configuration: cfg)
+            workoutSession?.startActivity(with: Date())
+            print("✅ Started background workout session for dhikr detection")
+        } catch {
+            print("⚠️ Failed to start workout session: \(error.localizedDescription)")
+            // Continue without background session
+        }
+    }
+    
+    private func stopWorkoutSession() {
+        workoutSession?.stopActivity(with: Date())
+        workoutSession = nil
+        print("🛑 Stopped background workout session")
     }
 }
 
