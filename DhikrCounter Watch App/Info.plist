@@ -22,6 +22,10 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>NSMotionUsageDescription</key>
 	<string>This app uses motion sensors to detect finger pinches during dhikr (Islamic prayer recitation) with research-validated accuracy.</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>This app uses HealthKit to run background workout sessions that keep the app active while collecting sensor data during dhikr sessions.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>This app uses HealthKit to run background workout sessions that keep the app active while collecting sensor data during dhikr sessions.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>workout-processing</string>

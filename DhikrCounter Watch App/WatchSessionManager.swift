@@ -87,7 +87,10 @@ class WatchSessionManager: NSObject, ObservableObject {
         let fileName = "session_\(sessionId.uuidString)_\(Int(Date().timeIntervalSince1970)).json"
         let fileURL = tempDir.appendingPathComponent(fileName)
         
-        try jsonData.write(to: fileURL)
+        // Ensure temp directory exists
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true, attributes: nil)
+        
+        try jsonData.write(to: fileURL, options: .atomic)
         print("⌚ Created temp file: \(fileURL.path)")
         print("⌚ File size: \(ByteCountFormatter.string(fromByteCount: Int64(jsonData.count), countStyle: .file))")
         
@@ -196,13 +199,16 @@ extension WatchSessionManager: @preconcurrency WCSessionDelegate {
                 self.isTransferring = false
                 print("✅ File transfer completed successfully")
                 
-                // Clean up temporary file
-                if FileManager.default.fileExists(atPath: fileTransfer.file.fileURL.path) {
-                    do {
-                        try FileManager.default.removeItem(at: fileTransfer.file.fileURL)
-                        print("⌚ Cleaned up temporary file: \(fileTransfer.file.fileURL.path)")
-                    } catch {
-                        print("⚠️ Failed to clean up temporary file: \(error)")
+                // Clean up temporary file safely
+                let tempFileURL = fileTransfer.file.fileURL
+                DispatchQueue.global(qos: .background).async {
+                    if FileManager.default.fileExists(atPath: tempFileURL.path) {
+                        do {
+                            try FileManager.default.removeItem(at: tempFileURL)
+                            print("⌚ Cleaned up temporary file: \(tempFileURL.path)")
+                        } catch {
+                            print("⚠️ Failed to clean up temporary file: \(error)")
+                        }
                     }
                 }
             }
