@@ -18,13 +18,10 @@ class PhoneSessionManager: NSObject, ObservableObject {
     private var storedDetectionEvents: [String: [DetectionEvent]] = [:]
     private var storedMetadata: [String: SessionMetadata] = [:]
     
-    // File storage
-    private var documentsDirectory: URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-    }
-    
+    // File storage - use Documents directory (required for iOS file sharing)
     private var sessionsDirectory: URL {
-        documentsDirectory.appendingPathComponent("DhikrSessions", isDirectory: true)
+        let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        return documentsURL
     }
     
     // Public accessors for UI
@@ -105,7 +102,26 @@ class PhoneSessionManager: NSObject, ObservableObject {
         setupFileStorage()
         loadPersistedSessions()
         setupWatchConnectivity()
-        addDebugMessage("PhoneSessionManager singleton initialized")
+        syncExportFormatToWatch()
+    }
+    
+    private func syncExportFormatToWatch() {
+        let exportFormat = UserDefaults.standard.string(forKey: "exportFormat") ?? "JSON"
+        let session = WCSession.default
+        
+        guard session.activationState == .activated && session.isPaired else {
+            return
+        }
+        
+        do {
+            try session.updateApplicationContext(["exportFormat": exportFormat])
+        } catch {
+            addDebugMessage("Failed to sync export format: \(error.localizedDescription)")
+        }
+    }
+    
+    func updateExportFormat() {
+        syncExportFormatToWatch()
     }
     
     private func setupWatchConnectivity() {
@@ -133,26 +149,36 @@ class PhoneSessionManager: NSObject, ObservableObject {
         // Create sessions directory if it doesn't exist
         do {
             try FileManager.default.createDirectory(at: sessionsDirectory, withIntermediateDirectories: true)
-            addDebugMessage("Sessions directory ready at: \(sessionsDirectory.path)")
+            
+            // Create a readme file to make the app visible in Files app
+            let readmeURL = sessionsDirectory.appendingPathComponent("DhikrSessions_README.txt")
+            if !FileManager.default.fileExists(atPath: readmeURL.path) {
+                let readmeContent = """
+                Dhikr Counter Session Files
+                
+                This app directory contains session files with research-grade sensor data.
+                
+                Each session file includes:
+                • High-resolution sensor data (100Hz accelerometer and gyroscope)  
+                • Detection events and timestamps
+                • Research-grade CSV/JSON format for analysis
+                
+                Files are named: session_[UUID].json
+                
+                Access: Files app → "On My iPhone" → "Dhikr Counter"
+                
+                Generated automatically by Dhikr Counter app.
+                """
+                try readmeContent.write(to: readmeURL, atomically: true, encoding: .utf8)
+            }
         } catch {
-            addDebugMessage("Failed to create sessions directory: \(error.localizedDescription)")
+            // Silent failure for directory setup
         }
     }
     
     private func loadPersistedSessions() {
-        addDebugMessage("🔍 Starting session loading from: \(sessionsDirectory.path)")
-        
-        // Check if directory exists
-        let directoryExists = FileManager.default.fileExists(atPath: sessionsDirectory.path)
-        addDebugMessage("📁 Sessions directory exists: \(directoryExists)")
-        
         do {
             let allFiles = try FileManager.default.contentsOfDirectory(at: sessionsDirectory, includingPropertiesForKeys: nil)
-            addDebugMessage("📂 Found \(allFiles.count) total files in sessions directory")
-            
-            for file in allFiles {
-                addDebugMessage("📄 File found: \(file.lastPathComponent)")
-            }
             
             // First try to load from .meta.json files (fast)
             let metadataFiles = allFiles
@@ -436,6 +462,9 @@ extension PhoneSessionManager: @preconcurrency WCSessionDelegate {
                 self.isWatchConnected = session.isReachable && session.isPaired
                 self.lastReceiveStatus = "Watch connectivity activated - Reachable: \(session.isReachable), Paired: \(session.isPaired)"
                 
+                // Sync export format after activation
+                self.syncExportFormatToWatch()
+                
                 // Force check after a delay
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                     self.checkConnectionStatus()
@@ -522,15 +551,10 @@ extension PhoneSessionManager: @preconcurrency WCSessionDelegate {
         }
         
         Task { @MainActor in
-            self.addDebugMessage("📁 Received file: \(fileURL.lastPathComponent)")
-            self.addDebugMessage("📁 File metadata: \(metadata)")
-            self.addDebugMessage("📁 File size read: \(ByteCountFormatter.string(fromByteCount: Int64(fileData.count), countStyle: .file))")
-            
             self.isReceivingFile = true
             self.fileTransferProgress = "Processing received file..."
             
             guard let type = metadata["type"] as? String, type == "sessionFile" else {
-                self.addDebugMessage("❌ Invalid file metadata - not a session file")
                 self.isReceivingFile = false
                 self.lastReceiveStatus = "❌ Invalid file metadata"
                 return
@@ -596,14 +620,11 @@ extension PhoneSessionManager: @preconcurrency WCSessionDelegate {
     }
     
     private func handleSessionFile(fileData: Data, metadata: [String: Any]) {
-        addDebugMessage("📁 Processing session file...")
-        
         guard let sessionIdString = metadata["sessionId"] as? String,
               let sensorCountString = metadata["sensorDataCount"] as? String,
               let sensorCount = Int(sensorCountString),
               let fileSizeString = metadata["fileSize"] as? String,
               let fileSize = Int(fileSizeString) else {
-            addDebugMessage("❌ Invalid file metadata format")
             DispatchQueue.main.async {
                 self.isReceivingFile = false
                 self.lastReceiveStatus = "❌ Invalid file metadata"
@@ -611,19 +632,17 @@ extension PhoneSessionManager: @preconcurrency WCSessionDelegate {
             return
         }
         
-        addDebugMessage("📁 File details - SessionId: \(sessionIdString), Readings: \(sensorCount), Size: \(ByteCountFormatter.string(fromByteCount: Int64(fileSize), countStyle: .file))")
+        let format = metadata["format"] as? String ?? "JSON"
         
         // Process file data in background
         Task {
             do {
-                let sessionData = try await processSessionFile(data: fileData)
+                let sessionData = try await processSessionFile(data: fileData, format: format, sessionIdString: sessionIdString)
                 
                 await MainActor.run {
                     // Store the data
                     self.storedSensorData[sessionIdString] = sessionData.sensorData
                     self.storedDetectionEvents[sessionIdString] = sessionData.detectionEvents
-                    
-                    self.addDebugMessage("📊 Stored sensor data for session ID: \(sessionIdString)")
                     
                     // Create session for display using the original session ID
                     let startTime = sessionData.sensorData.first?.timestamp ?? Date()
@@ -642,7 +661,7 @@ extension PhoneSessionManager: @preconcurrency WCSessionDelegate {
                     )
                     
                     self.receivedSessions.append(session)
-                    self.lastReceiveStatus = "✅ Received file: \(sessionData.sensorData.count) readings (\(ByteCountFormatter.string(fromByteCount: Int64(fileSize), countStyle: .file)))"
+                    self.lastReceiveStatus = "✅ Received \(sessionData.sensorData.count) readings"
                     self.isReceivingFile = false
                     self.fileTransferProgress = ""
                     
@@ -665,15 +684,82 @@ extension PhoneSessionManager: @preconcurrency WCSessionDelegate {
         }
     }
     
-    private func processSessionFile(data: Data) async throws -> SessionData {
-        await MainActor.run {
-            self.addDebugMessage("📁 Processing \(data.count) bytes of JSON data")
+    private func processSessionFile(data: Data, format: String, sessionIdString: String) async throws -> SessionData {
+        
+        if format == "CSV" {
+            return try parseCSVSessionData(data: data, sessionIdString: sessionIdString)
+        } else {
+            // Default to JSON
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return try decoder.decode(SessionData.self, from: data)
+        }
+    }
+    
+    private func parseCSVSessionData(data: Data, sessionIdString: String) throws -> SessionData {
+        guard let csvString = String(data: data, encoding: .utf8) else {
+            throw NSError(domain: "CSVParseError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not decode CSV data as UTF-8"])
         }
         
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        let lines = csvString.components(separatedBy: .newlines).filter { !$0.isEmpty }
+        guard lines.count > 1 else {
+            throw NSError(domain: "CSVParseError", code: 2, userInfo: [NSLocalizedDescriptionKey: "CSV file is empty or has no data rows"])
+        }
         
-        return try decoder.decode(SessionData.self, from: data)
+        // Skip header line
+        let dataLines = Array(lines.dropFirst())
+        var sensorReadings: [SensorReading] = []
+        
+        for line in dataLines {
+            let components = line.components(separatedBy: ",")
+            guard components.count >= 15 else { continue }
+            
+            // Parse CSV format: time_s,epoch_s,userAccelerationX,userAccelerationY,userAccelerationZ,gravityX,gravityY,gravityZ,rotationRateX,rotationRateY,rotationRateZ,attitude_qW,attitude_qX,attitude_qY,attitude_qZ
+            guard let relativeTime = Double(components[0]),
+                  let epochTime = Double(components[1]),
+                  let userAccelX = Double(components[2]),
+                  let userAccelY = Double(components[3]),
+                  let userAccelZ = Double(components[4]),
+                  let gravityX = Double(components[5]),
+                  let gravityY = Double(components[6]),
+                  let gravityZ = Double(components[7]),
+                  let rotationX = Double(components[8]),
+                  let rotationY = Double(components[9]),
+                  let rotationZ = Double(components[10]),
+                  let attitudeW = Double(components[11]),
+                  let attitudeX = Double(components[12]),
+                  let attitudeY = Double(components[13]),
+                  let attitudeZ = Double(components[14]) else {
+                continue
+            }
+            
+            let timestamp = Date(timeIntervalSince1970: epochTime)
+            let reading = SensorReading(
+                timestamp: timestamp,
+                motionTimestamp: relativeTime,
+                epochTimestamp: epochTime,
+                userAcceleration: SIMD3<Double>(userAccelX, userAccelY, userAccelZ),
+                gravity: SIMD3<Double>(gravityX, gravityY, gravityZ),
+                rotationRate: SIMD3<Double>(rotationX, rotationY, rotationZ),
+                attitude: SIMD4<Double>(attitudeW, attitudeX, attitudeY, attitudeZ),
+                activityIndex: 0.0, // CSV doesn't include activity index
+                detectionScore: nil, // CSV doesn't include detection score
+                sessionState: .activeDhikr // Assume active state for CSV data
+            )
+            
+            sensorReadings.append(reading)
+        }
+        
+        guard let sessionId = UUID(uuidString: sessionIdString) else {
+            throw NSError(domain: "CSVParseError", code: 3, userInfo: [NSLocalizedDescriptionKey: "Invalid session UUID"])
+        }
+        
+        return SessionData(
+            sessionId: sessionId,
+            timestamp: Date().timeIntervalSince1970,
+            sensorData: sensorReadings,
+            detectionEvents: [] // CSV format doesn't include detection events separately
+        )
     }
 }
 

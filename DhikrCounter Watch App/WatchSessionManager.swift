@@ -10,6 +10,7 @@ class WatchSessionManager: NSObject, ObservableObject {
     @Published var lastTransferError: Error?
     
     private var pendingTransfers: [PendingTransfer] = []
+    private var exportFormat: String = "JSON" // Default format
     
     private struct PendingTransfer {
         let sensorData: [SensorReading]
@@ -34,21 +35,12 @@ class WatchSessionManager: NSObject, ObservableObject {
         session.activate()
         
         transferStatus = "WCSession activation requested"
-        print("⌚ WCSession activation requested - Delegate set and activate() called")
-        print("⌚ Current activation state: \(session.activationState.rawValue)")
-        
-        // Additional logging for configuration verification
-        DispatchQueue.main.async {
-            print("⌚ CompanionInstalled: \(session.isCompanionAppInstalled)")
-        }
     }
     
     func transferSensorData(sensorData: [SensorReading], detectionEvents: [DetectionEvent], sessionId: UUID) {
-        print("⌚ Transfer requested for \(sensorData.count) readings via transferFile")
         
         let session = WCSession.default
         guard session.activationState == .activated else {
-            print("⌚ Session not activated - queuing transfer")
             let pendingTransfer = PendingTransfer(sensorData: sensorData, detectionEvents: detectionEvents, sessionId: sessionId)
             pendingTransfers.append(pendingTransfer)
             transferStatus = "Queued - waiting for activation (\(pendingTransfers.count) pending)"
@@ -63,55 +55,101 @@ class WatchSessionManager: NSObject, ObservableObject {
                     self.transferStatus = "Transfer error: \(error.localizedDescription)"
                     self.lastTransferError = error
                 }
-                print("❌ Transfer error: \(error)")
             }
         }
     }
     
     private func performFileTransfer(sensorData: [SensorReading], detectionEvents: [DetectionEvent], sessionId: UUID) async throws {
-        // Create session data structure
-        let sessionData = SessionData(
-            sessionId: sessionId,
-            timestamp: Date().timeIntervalSince1970,
-            sensorData: sensorData,
-            detectionEvents: detectionEvents
-        )
-        
-        // Encode to JSON
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let jsonData = try encoder.encode(sessionData)
-        
-        // Create temporary file
         let tempDir = FileManager.default.temporaryDirectory
-        let fileName = "session_\(sessionId.uuidString)_\(Int(Date().timeIntervalSince1970)).json"
+        let timestamp = Int(Date().timeIntervalSince1970)
+        let fileExtension = exportFormat.lowercased()
+        let fileName = "session_\(sessionId.uuidString)_\(timestamp).\(fileExtension)"
         let fileURL = tempDir.appendingPathComponent(fileName)
         
         // Ensure temp directory exists
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true, attributes: nil)
         
-        try jsonData.write(to: fileURL, options: .atomic)
-        print("⌚ Created temp file: \(fileURL.path)")
-        print("⌚ File size: \(ByteCountFormatter.string(fromByteCount: Int64(jsonData.count), countStyle: .file))")
+        let fileData: Data
+        let metadata: [String: String]
         
-        // Transfer file
-        let metadata = [
-            "type": "sessionFile",
-            "sessionId": sessionId.uuidString,
-            "sensorDataCount": String(sensorData.count),
-            "detectionEventCount": String(detectionEvents.count),
-            "timestamp": String(sessionData.timestamp),
-            "fileSize": String(jsonData.count)
-        ]
+        if exportFormat == "CSV" {
+            // Create CSV format
+            fileData = try createCSVData(sensorData: sensorData, detectionEvents: detectionEvents, sessionId: sessionId)
+            metadata = [
+                "type": "sessionFile",
+                "format": "CSV",
+                "sessionId": sessionId.uuidString,
+                "sensorDataCount": String(sensorData.count),
+                "detectionEventCount": String(detectionEvents.count),
+                "timestamp": String(Date().timeIntervalSince1970),
+                "fileSize": String(fileData.count)
+            ]
+        } else {
+            // Create JSON format (default)
+            let sessionData = SessionData(
+                sessionId: sessionId,
+                timestamp: Date().timeIntervalSince1970,
+                sensorData: sensorData,
+                detectionEvents: detectionEvents
+            )
+            
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            fileData = try encoder.encode(sessionData)
+            metadata = [
+                "type": "sessionFile",
+                "format": "JSON",
+                "sessionId": sessionId.uuidString,
+                "sensorDataCount": String(sensorData.count),
+                "detectionEventCount": String(detectionEvents.count),
+                "timestamp": String(Date().timeIntervalSince1970),
+                "fileSize": String(fileData.count)
+            ]
+        }
+        
+        try fileData.write(to: fileURL, options: .atomic)
         
         WCSession.default.transferFile(fileURL, metadata: metadata)
         
         await MainActor.run {
             self.isTransferring = true
-            self.transferStatus = "File transfer initiated (\(sensorData.count) readings, \(ByteCountFormatter.string(fromByteCount: Int64(jsonData.count), countStyle: .file)))"
+            self.transferStatus = "File transfer initiated (\(sensorData.count) readings, \(ByteCountFormatter.string(fromByteCount: Int64(fileData.count), countStyle: .file)))"
+        }
+    }
+    
+    private func createCSVData(sensorData: [SensorReading], detectionEvents: [DetectionEvent], sessionId: UUID) throws -> Data {
+        var csvContent = "time_s,epoch_s,userAccelerationX,userAccelerationY,userAccelerationZ,gravityX,gravityY,gravityZ,rotationRateX,rotationRateY,rotationRateZ,attitude_qW,attitude_qX,attitude_qY,attitude_qZ\n"
+        
+        let startTime = sensorData.first?.motionTimestamp ?? 0.0
+        
+        for reading in sensorData {
+            let relativeTime = reading.motionTimestamp - startTime
+            let epochTime = reading.epochTimestamp
+            
+            let row = String(format: "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n",
+                           relativeTime,
+                           epochTime,
+                           reading.userAcceleration.x,
+                           reading.userAcceleration.y,
+                           reading.userAcceleration.z,
+                           reading.gravity.x,
+                           reading.gravity.y,
+                           reading.gravity.z,
+                           reading.rotationRate.x,
+                           reading.rotationRate.y,
+                           reading.rotationRate.z,
+                           reading.attitude.w,
+                           reading.attitude.x,
+                           reading.attitude.y,
+                           reading.attitude.z)
+            csvContent += row
         }
         
-        print("⌚ transferFile called successfully with metadata: \(metadata)")
+        guard let data = csvContent.data(using: .utf8) else {
+            throw NSError(domain: "CSVExportError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to encode CSV data"])
+        }
+        
+        return data
     }
 }
 
@@ -130,19 +168,14 @@ private struct SessionData: Codable {
 
 extension WatchSessionManager: @preconcurrency WCSessionDelegate {
     func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
-        print("⌚ WCSession activation completed!")
-        print("   State: \(activationState)")
-        print("   Reachable: \(session.isReachable)")
         
         DispatchQueue.main.async {
             switch activationState {
             case .activated:
                 self.transferStatus = "WCSession activated successfully"
-                print("✅ WCSession activated - flushing \(self.pendingTransfers.count) queued transfers")
                 
                 // Flush queued transfers
                 if !self.pendingTransfers.isEmpty {
-                    print("⌚ Flushing \(self.pendingTransfers.count) queued file transfers")
                     for pendingTransfer in self.pendingTransfers {
                         Task {
                             do {
@@ -151,9 +184,8 @@ extension WatchSessionManager: @preconcurrency WCSessionDelegate {
                                     detectionEvents: pendingTransfer.detectionEvents,
                                     sessionId: pendingTransfer.sessionId
                                 )
-                                print("⌚ Flushed queued file transfer for session \(pendingTransfer.sessionId)")
                             } catch {
-                                print("❌ Error flushing queued transfer: \(error)")
+                                // Silent failure for queued transfers
                             }
                         }
                     }
@@ -162,29 +194,32 @@ extension WatchSessionManager: @preconcurrency WCSessionDelegate {
                 
             case .inactive:
                 self.transferStatus = "WCSession inactive"
-                print("❌ WCSession inactive")
                 
             case .notActivated:
                 self.transferStatus = "WCSession not activated"
-                print("❌ WCSession not activated")
                 
             @unknown default:
                 self.transferStatus = "WCSession unknown state"
-                print("❓ WCSession unknown state")
             }
             
             if let error = error {
                 self.lastTransferError = error
                 self.transferStatus = "Activation error: \(error.localizedDescription)"
-                print("❌ WCSession activation error: \(error)")
             }
         }
     }
     
     func session(_ session: WCSession, didReceiveMessage message: [String : Any], replyHandler: @escaping ([String : Any]) -> Void) {
-        // Handle messages from iPhone (acknowledgments, etc.)
-        print("⌚ Received message from iPhone: \(message)")
         replyHandler(["status": "received"])
+    }
+    
+    nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String : Any]) {
+        DispatchQueue.main.async {
+            if let formatString = applicationContext["exportFormat"] as? String {
+                self.exportFormat = formatString
+                self.transferStatus = "Export format: \(formatString)"
+            }
+        }
     }
     
     nonisolated func session(_ session: WCSession, didFinish fileTransfer: WCSessionFileTransfer, error: Error?) {
@@ -193,23 +228,14 @@ extension WatchSessionManager: @preconcurrency WCSessionDelegate {
                 self.transferStatus = "File transfer failed: \(error.localizedDescription)"
                 self.lastTransferError = error
                 self.isTransferring = false
-                print("❌ File transfer failed: \(error)")
             } else {
                 self.transferStatus = "✅ File transfer completed successfully"
                 self.isTransferring = false
-                print("✅ File transfer completed successfully")
                 
                 // Clean up temporary file safely
                 let tempFileURL = fileTransfer.file.fileURL
                 DispatchQueue.global(qos: .background).async {
-                    if FileManager.default.fileExists(atPath: tempFileURL.path) {
-                        do {
-                            try FileManager.default.removeItem(at: tempFileURL)
-                            print("⌚ Cleaned up temporary file: \(tempFileURL.path)")
-                        } catch {
-                            print("⚠️ Failed to clean up temporary file: \(error)")
-                        }
-                    }
+                    try? FileManager.default.removeItem(at: tempFileURL)
                 }
             }
         }
