@@ -1,4 +1,5 @@
 import SwiftUI
+import WatchKit
 
 @main
 struct DhikrCounterApp: App {

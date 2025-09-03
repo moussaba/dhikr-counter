@@ -67,6 +67,29 @@ struct DhikrSession: Codable, Identifiable {
 }
 
 extension DhikrSession {
+    static func createWithId(
+        id: UUID,
+        startTime: Date,
+        endTime: Date,
+        totalPinches: Int,
+        detectedPinches: Int,
+        manualCorrections: Int,
+        sessionDuration: TimeInterval,
+        notes: String?
+    ) -> DhikrSession {
+        return DhikrSession(
+            id: id,
+            startTime: startTime,
+            endTime: endTime,
+            totalPinches: totalPinches,
+            detectedPinches: detectedPinches,
+            manualCorrections: manualCorrections,
+            sessionDuration: sessionDuration,
+            deviceInfo: .current,
+            sessionNotes: notes
+        )
+    }
+    
     static let sample = DhikrSession(
         id: UUID(),
         startTime: Date().addingTimeInterval(-1800), // 30 minutes ago
