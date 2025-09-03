@@ -79,7 +79,7 @@ struct QuickStatsView: View {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 12) {
                 StatCard(title: "Total Sessions", value: "\(dataManager.receivedSessions.count)", color: .blue)
                 StatCard(title: "Sensor Readings", value: totalReadingsText, color: .green)
-                StatCard(title: "Data Transferred", value: totalDataSizeText, color: .orange)
+                StatCard(title: "Data Size", value: totalDataSizeText, color: .orange)
                 StatCard(title: "Connection Status", value: connectionStatusText, color: connectionStatusColor)
             }
         }
@@ -89,10 +89,7 @@ struct QuickStatsView: View {
     }
     
     private var totalReadingsText: String {
-        let totalReadings = dataManager.receivedSessions.compactMap { session in
-            dataManager.getSensorData(for: session.id.uuidString)?.count
-        }.reduce(0, +)
-        
+        let totalReadings = dataManager.totalSensorReadings
         if totalReadings == 0 {
             return "0"
         } else if totalReadings >= 1000 {
@@ -103,20 +100,11 @@ struct QuickStatsView: View {
     }
     
     private var totalDataSizeText: String {
-        let totalReadings = dataManager.receivedSessions.compactMap { session in
-            dataManager.getSensorData(for: session.id.uuidString)?.count
-        }.reduce(0, +)
-        
-        let estimatedBytes = totalReadings * 48 // Rough estimate per reading
-        
-        if estimatedBytes == 0 {
+        let totalBytes = dataManager.estimatedTotalDataSize
+        if totalBytes == 0 {
             return "0 KB"
-        } else if estimatedBytes >= 1024 * 1024 {
-            return String(format: "%.1f MB", Double(estimatedBytes) / (1024.0 * 1024.0))
-        } else if estimatedBytes >= 1024 {
-            return String(format: "%.1f KB", Double(estimatedBytes) / 1024.0)
         } else {
-            return "\(estimatedBytes) B"
+            return ByteCountFormatter.string(fromByteCount: Int64(totalBytes), countStyle: .file)
         }
     }
     
@@ -235,7 +223,7 @@ struct RecentSessionsView: View {
                 .cornerRadius(12)
             } else {
                 LazyVStack(spacing: 8) {
-                    ForEach(dataManager.receivedSessions.prefix(3)) { session in
+                    ForEach(dataManager.receivedSessions.sorted(by: { $0.startTime > $1.startTime }).prefix(3)) { session in
                         EnhancedSessionRowView(session: session)
                     }
                     
@@ -354,23 +342,18 @@ struct EnhancedSessionRowView: View {
                     }
                     
                     HStack(spacing: 16) {
-                        if let sensorData = dataManager.getSensorData(for: session.id.uuidString) {
-                            Label("\(sensorData.count)", systemImage: "waveform")
-                                .font(.caption)
-                                .foregroundColor(.blue)
-                            
-                            Label(String(format: "%.1fs", session.sessionDuration), systemImage: "clock")
-                                .font(.caption)
-                                .foregroundColor(.green)
-                                
-                            Label(dataSizeString(for: sensorData.count), systemImage: "doc.on.doc")
-                                .font(.caption)
-                                .foregroundColor(.orange)
-                        } else {
-                            Text("No sensor data")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
+                        let sensorCount = dataManager.getSensorDataCount(for: session.id.uuidString)
+                        Text("\(sensorCount) readings")
+                            .font(.caption)
+                            .foregroundColor(.blue)
+                        
+                        Text("•")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        Text(String(format: "%.1fs", session.sessionDuration))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                         
                         Spacer()
                         

@@ -125,7 +125,7 @@ private struct SessionData: Codable {
 
 // MARK: - WCSessionDelegate
 
-extension WatchSessionManager: WCSessionDelegate {
+extension WatchSessionManager: @preconcurrency WCSessionDelegate {
     func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
         print("⌚ WCSession activation completed!")
         print("   State: \(activationState)")

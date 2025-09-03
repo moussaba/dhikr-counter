@@ -2,7 +2,7 @@ import SwiftUI
 import CoreMotion
 import WatchKit
 
-class DhikrDetectionEngine: ObservableObject {
+class DhikrDetectionEngine: NSObject, ObservableObject {
     private let motionManager = CMMotionManager()
     private let motionActivityManager = CMMotionActivityManager()
     
@@ -16,10 +16,12 @@ class DhikrDetectionEngine: ObservableObject {
     // Buffer management constants
     private let bufferSize = 50
     private let minBufferSizeForStats = 10
-    private let maxLogSize = 3000 // 30 seconds at 100Hz
+    private let maxLogSize = 12000 // 120 seconds at 100Hz - increased for extended sessions
+    private let maxDetectionEventLogSize = 1000 // Limit detection events to prevent memory growth
     private let robustStatsMADConstant = 1.4826
     private let sessionSetupDelay = 3.0 // seconds
     private let pauseDetectionThreshold = 1.0 // activity index
+    private let statsUpdateInterval = 10 // Update robust stats every N samples to reduce CPU load
     
     // Buffer management
     private var accelerationBuffer: [Double] = []
@@ -33,6 +35,7 @@ class DhikrDetectionEngine: ObservableObject {
     private var runningAccelMAD: Double = 0
     private var runningGyroMAD: Double = 0
     private var lastDetectionTime: Date = Date.distantPast
+    private var sampleCounter: Int = 0 // Counter to reduce statistics update frequency
     
     @Published var pinchCount: Int = 0
     @Published var sessionState: SessionState = .inactive
@@ -47,7 +50,11 @@ class DhikrDetectionEngine: ObservableObject {
     // WatchConnectivity integration  
     private let sessionManager = WatchSessionManager.shared
     
-    init() {
+    // Extended runtime session to prevent app dismissal
+    private var extendedRuntimeSession: WKExtendedRuntimeSession?
+    
+    override init() {
+        super.init()
         // WCSession is automatically initialized by singleton
     }
     
@@ -89,7 +96,7 @@ class DhikrDetectionEngine: ObservableObject {
         if CMMotionActivityManager.isActivityAvailable() {
             let now = Date()
             let past = now.addingTimeInterval(-1) // 1 second ago
-            motionActivityManager.queryActivityStarting(from: past, to: now, to: OperationQueue.main) { _, error in
+            motionActivityManager.queryActivityStarting(from: past, to: now, to: OperationQueue.main) { activities, error in
                 if let error = error {
                     print("Motion permission error: \(error.localizedDescription)")
                     completion(false)
@@ -117,6 +124,9 @@ class DhikrDetectionEngine: ObservableObject {
             currentSessionId = UUID()
             clearLogs()
             
+            // Start extended runtime session even in simulator mode
+            startExtendedRuntimeSession()
+            
             // Provide haptic feedback
             WKInterfaceDevice.current().play(.start)
             
@@ -134,6 +144,9 @@ class DhikrDetectionEngine: ObservableObject {
         pinchCount = 0
         currentMilestone = 0
         currentSessionId = UUID()
+        
+        // Start extended runtime session to prevent app dismissal
+        startExtendedRuntimeSession()
         
         // Clear previous session data
         clearLogs()
@@ -177,6 +190,9 @@ class DhikrDetectionEngine: ObservableObject {
         sessionStartTime = nil
         currentSessionId = nil
         
+        // Stop extended runtime session to allow normal app behavior
+        stopExtendedRuntimeSession()
+        
         // Provide haptic feedback for session stop
         WKInterfaceDevice.current().play(.stop)
     }
@@ -197,17 +213,7 @@ class DhikrDetectionEngine: ObservableObject {
         let userAccel = motion.userAcceleration
         let rotationRate = motion.rotationRate
         
-        // Create sensor reading for data logging
-        let sensorReading = SensorReading(
-            timestamp: currentTime,
-            userAcceleration: SIMD3<Double>(userAccel.x, userAccel.y, userAccel.z),
-            rotationRate: SIMD3<Double>(rotationRate.x, rotationRate.y, rotationRate.z),
-            activityIndex: 0.0, // No activity analysis needed
-            detectionScore: nil, // No detection scores
-            sessionState: SensorReading.SessionState(rawValue: sessionState.rawValue) ?? .inactive
-        )
-        
-        // Log sensor data
+        // Log sensor data - no processing, no statistics, no detection
         logSensorData(accel: userAccel, gyro: rotationRate, activityIndex: 0.0, time: currentTime)
         
         // Simple state management - just go to active after setup delay
@@ -216,8 +222,6 @@ class DhikrDetectionEngine: ObservableObject {
                 self?.sessionState = .activeDhikr
             }
         }
-        
-        // No pinch detection - just collect raw sensor data
     }
     
     private func updateBuffers(acceleration: Double, gyroscope: Double, time: Date) {
@@ -303,6 +307,11 @@ class DhikrDetectionEngine: ObservableObject {
     }
     
     private func updateRobustStatistics(acceleration: Double, gyroscope: Double) {
+        sampleCounter += 1
+        
+        // Only update robust statistics every statsUpdateInterval samples to reduce CPU load
+        guard sampleCounter % statsUpdateInterval == 0 else { return }
+        
         // Update acceleration statistics
         if accelerationBuffer.count >= minBufferSizeForStats {
             let sortedAccel = accelerationBuffer.sorted()
@@ -412,6 +421,8 @@ class DhikrDetectionEngine: ObservableObject {
         return squaredDiffs.reduce(0, +) / Double(values.count - 1)
     }
     
+    // MARK: - Manual increment still available for testing
+    
     // MARK: - Manual Correction (Apple Watch Series 9 Double Tap)
     
     func manualPinchIncrement() {
@@ -428,7 +439,7 @@ class DhikrDetectionEngine: ObservableObject {
             userAcceleration: SIMD3(accel.x, accel.y, accel.z),
             rotationRate: SIMD3(gyro.x, gyro.y, gyro.z),
             activityIndex: activityIndex,
-            detectionScore: scoreBuffer.last,
+            detectionScore: nil, // No detection scores during data collection mode
             sessionState: SensorReading.SessionState(rawValue: sessionState.rawValue) ?? .inactive
         )
         
@@ -451,6 +462,11 @@ class DhikrDetectionEngine: ObservableObject {
         )
         
         detectionEventLog.append(event)
+        
+        // Maintain reasonable detection event log size
+        if detectionEventLog.count > maxDetectionEventLogSize {
+            detectionEventLog.removeFirst()
+        }
     }
     
     // MARK: - Data Transfer to iPhone
@@ -462,7 +478,7 @@ class DhikrDetectionEngine: ObservableObject {
         }
         
         // Create session metadata
-        let session = createSessionSummary(sessionId: sessionId)
+        _ = createSessionSummary(sessionId: sessionId)
         
         // Transfer sensor data and detection events
         Task { @MainActor in
@@ -511,6 +527,19 @@ class DhikrDetectionEngine: ObservableObject {
     func clearLogs() {
         sensorDataLog.removeAll()
         detectionEventLog.removeAll()
+        
+        // Reset counters and buffers
+        sampleCounter = 0
+        accelerationBuffer.removeAll()
+        gyroscopeBuffer.removeAll()
+        scoreBuffer.removeAll()
+        timeBuffer.removeAll()
+        
+        // Reset robust statistics
+        runningAccelMedian = 0
+        runningGyroMedian = 0
+        runningAccelMAD = 0
+        runningGyroMAD = 0
     }
     
     // Computed properties for UI
@@ -532,6 +561,49 @@ class DhikrDetectionEngine: ObservableObject {
         else if pinchCount < 66 { return 66 }
         else if pinchCount < 100 { return 100 }
         else { return 100 }
+    }
+    
+    // MARK: - Extended Runtime Session Management
+    
+    private func startExtendedRuntimeSession() {
+        // End any existing session first
+        stopExtendedRuntimeSession()
+        
+        extendedRuntimeSession = WKExtendedRuntimeSession()
+        extendedRuntimeSession?.delegate = self
+        
+        extendedRuntimeSession?.start()
+    }
+    
+    private func stopExtendedRuntimeSession() {
+        guard let session = extendedRuntimeSession else { return }
+        
+        session.invalidate()
+        extendedRuntimeSession = nil
+        print("⏹️ Extended runtime session stopped")
+    }
+}
+
+// MARK: - Extended Runtime Session Delegate
+
+extension DhikrDetectionEngine: WKExtendedRuntimeSessionDelegate {
+    func extendedRuntimeSession(_ extendedRuntimeSession: WKExtendedRuntimeSession, didInvalidateWith reason: WKExtendedRuntimeSessionInvalidationReason, error: Error?) {
+        DispatchQueue.main.async { [weak self] in
+            print("⚠️ Extended runtime session invalidated. Reason: \(reason)")
+            if let error = error {
+                print("❌ Extended runtime session error: \(error.localizedDescription)")
+            }
+            self?.extendedRuntimeSession = nil
+        }
+    }
+    
+    func extendedRuntimeSessionDidStart(_ extendedRuntimeSession: WKExtendedRuntimeSession) {
+        print("✅ Extended runtime session started successfully")
+    }
+    
+    func extendedRuntimeSessionWillExpire(_ extendedRuntimeSession: WKExtendedRuntimeSession) {
+        print("⚠️ Extended runtime session will expire soon")
+        // Optionally try to restart the session or notify the user
     }
 }
 
