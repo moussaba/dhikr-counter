@@ -20,7 +20,11 @@ class PhoneSessionManager: NSObject, ObservableObject {
     
     // File storage - use Documents directory (required for iOS file sharing)
     private var sessionsDirectory: URL {
-        let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            // Fallback to temporary directory if Documents unavailable
+            print("⚠️ Documents directory unavailable, falling back to temporary directory")
+            return FileManager.default.temporaryDirectory
+        }
         return documentsURL
     }
     
@@ -100,9 +104,13 @@ class PhoneSessionManager: NSObject, ObservableObject {
     private override init() {
         super.init()
         setupFileStorage()
-        loadPersistedSessions()
         setupWatchConnectivity()
         syncExportFormatToWatch()
+        
+        // Load sessions in background to avoid blocking UI startup
+        Task {
+            await loadPersistedSessionsAsync()
+        }
     }
     
     private func syncExportFormatToWatch() {
@@ -176,7 +184,15 @@ class PhoneSessionManager: NSObject, ObservableObject {
         }
     }
     
-    private func loadPersistedSessions() {
+    // Async version for background loading (non-blocking startup)
+    @MainActor
+    private func loadPersistedSessionsAsync() async {
+        await Task.detached(priority: .utility) {
+            await self.loadPersistedSessionsBackground()
+        }.value
+    }
+    
+    private func loadPersistedSessionsBackground() async {
         do {
             let allFiles = try FileManager.default.contentsOfDirectory(at: sessionsDirectory, includingPropertiesForKeys: nil)
             
@@ -190,20 +206,22 @@ class PhoneSessionManager: NSObject, ObservableObject {
                 .filter { $0.pathExtension == "json" && !$0.lastPathComponent.contains(".meta.") }
                 .sorted { $0.lastPathComponent < $1.lastPathComponent }
             
-            addDebugMessage("🎯 Found \(metadataFiles.count) metadata files, \(sessionFiles.count) full session files")
+            print("🎯 Found \(metadataFiles.count) metadata files, \(sessionFiles.count) full session files")
             
+            var loadedSessions: [DhikrSession] = []
+            var loadedMetadata: [String: SessionMetadata] = [:]
             var loadedCount = 0
             
             // Process metadata files first (fast)
             for metadataFile in metadataFiles {
-                addDebugMessage("⚡ Loading from metadata file: \(metadataFile.lastPathComponent)")
+                print("⚡ Loading from metadata file: \(metadataFile.lastPathComponent)")
                 
                 if let metadata = loadSessionMetadata(from: metadataFile) {
                     let session = metadata.toDhikrSession()
-                    receivedSessions.append(session)
-                    storedMetadata[session.id.uuidString] = metadata
+                    loadedSessions.append(session)
+                    loadedMetadata[session.id.uuidString] = metadata
                     loadedCount += 1
-                    addDebugMessage("✅ Loaded metadata: \(session.id.uuidString.prefix(8)) - \(session.totalPinches) pinches")
+                    print("✅ Loaded metadata: \(session.id.uuidString.prefix(8)) - \(session.totalPinches) pinches")
                 }
             }
             
@@ -212,29 +230,37 @@ class PhoneSessionManager: NSObject, ObservableObject {
                 let sessionId = sessionFile.deletingPathExtension().lastPathComponent.replacingOccurrences(of: "session_", with: "")
                 
                 // Skip if we already loaded metadata for this session
-                if storedMetadata.keys.contains(sessionId) {
+                if loadedMetadata.keys.contains(sessionId) {
                     continue
                 }
                 
-                addDebugMessage("🐌 Loading from full session file (no metadata): \(sessionFile.lastPathComponent)")
+                print("🐌 Loading from full session file (no metadata): \(sessionFile.lastPathComponent)")
                 
                 if let metadata = loadSessionMetadata(from: sessionFile) {
                     let session = metadata.toDhikrSession()
-                    receivedSessions.append(session)
-                    storedMetadata[session.id.uuidString] = metadata
+                    loadedSessions.append(session)
+                    loadedMetadata[session.id.uuidString] = metadata
                     loadedCount += 1
-                    addDebugMessage("✅ Loaded metadata: \(session.id.uuidString.prefix(8)) - \(session.totalPinches) pinches")
+                    print("✅ Loaded metadata: \(session.id.uuidString.prefix(8)) - \(session.totalPinches) pinches")
                 }
             }
             
-            addDebugMessage("📊 SESSION LOADING SUMMARY:")
-            addDebugMessage("   • Total files found: \(allFiles.count)")
-            addDebugMessage("   • JSON files found: \(sessionFiles.count)")
-            addDebugMessage("   • Sessions loaded: \(loadedCount)")
-            addDebugMessage("   • Final receivedSessions count: \(receivedSessions.count)")
+            print("📊 SESSION LOADING SUMMARY:")
+            print("   • Total files found: \(allFiles.count)")
+            print("   • JSON files found: \(sessionFiles.count)")
+            print("   • Sessions loaded: \(loadedCount)")
+            
+            // Update UI on main thread
+            await MainActor.run {
+                receivedSessions.append(contentsOf: loadedSessions)
+                for (key, value) in loadedMetadata {
+                    storedMetadata[key] = value
+                }
+                print("   • Final receivedSessions count: \(receivedSessions.count)")
+            }
             
         } catch {
-            addDebugMessage("💥 Failed to load persisted sessions: \(error.localizedDescription)")
+            print("💥 Failed to load persisted sessions: \(error.localizedDescription)")
         }
     }
     
@@ -710,9 +736,16 @@ extension PhoneSessionManager: @preconcurrency WCSessionDelegate {
         let dataLines = Array(lines.dropFirst())
         var sensorReadings: [SensorReading] = []
         
-        for line in dataLines {
+        var skippedLinesCount = 0
+        var parsedLinesCount = 0
+        
+        for (lineIndex, line) in dataLines.enumerated() {
             let components = line.components(separatedBy: ",")
-            guard components.count >= 15 else { continue }
+            guard components.count >= 15 else { 
+                skippedLinesCount += 1
+                print("⚠️ CSV parsing: Skipped line \(lineIndex + 2) - insufficient columns (\(components.count) < 15)")
+                continue 
+            }
             
             // Parse CSV format: time_s,epoch_s,userAccelerationX,userAccelerationY,userAccelerationZ,gravityX,gravityY,gravityZ,rotationRateX,rotationRateY,rotationRateZ,attitude_qW,attitude_qX,attitude_qY,attitude_qZ
             guard let relativeTime = Double(components[0]),
@@ -730,8 +763,12 @@ extension PhoneSessionManager: @preconcurrency WCSessionDelegate {
                   let attitudeX = Double(components[12]),
                   let attitudeY = Double(components[13]),
                   let attitudeZ = Double(components[14]) else {
+                skippedLinesCount += 1
+                print("⚠️ CSV parsing: Skipped line \(lineIndex + 2) - invalid numeric data")
                 continue
             }
+            
+            parsedLinesCount += 1
             
             let timestamp = Date(timeIntervalSince1970: epochTime)
             let reading = SensorReading(
@@ -752,6 +789,12 @@ extension PhoneSessionManager: @preconcurrency WCSessionDelegate {
         
         guard let sessionId = UUID(uuidString: sessionIdString) else {
             throw NSError(domain: "CSVParseError", code: 3, userInfo: [NSLocalizedDescriptionKey: "Invalid session UUID"])
+        }
+        
+        // Log CSV parsing summary
+        print("📊 CSV parsing complete: \(parsedLinesCount) lines parsed, \(skippedLinesCount) lines skipped")
+        if skippedLinesCount > 0 {
+            print("⚠️ Data quality warning: \(skippedLinesCount)/\(dataLines.count) lines had issues")
         }
         
         return SessionData(

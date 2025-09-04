@@ -217,6 +217,10 @@ class DhikrDetectionEngine: ObservableObject {
         if let sessionId = currentSessionId {
             print("🚚 Initiating ENHANCED data transfer via transferFile() optimization...")
             transferSessionDataToPhone(sessionId: sessionId)
+            
+            // Clean up large sensor data arrays immediately after transfer to free memory
+            print("🧹 Clearing sensor data from memory after transfer")
+            clearLogs()
         }
         
         sessionState = .inactive
