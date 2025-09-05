@@ -436,7 +436,7 @@ struct SessionDetailView: View {
                 
                 // Sensor data preview
                 if let sensorData = dataManager.getSensorData(for: session.id.uuidString) {
-                    SensorDataPreviewCard(sensorData: sensorData)
+                    SensorDataPreviewCard(sensorData: sensorData, session: session)
                     
                     // Export button
                     Button(action: { showingExportSheet = true }) {
@@ -504,37 +504,60 @@ struct OverviewItem: View {
 
 struct SensorDataPreviewCard: View {
     let sensorData: [SensorReading]
-    @State private var selectedAccelerationMetric: AccelerationMetric = .allAxes
-    @State private var selectedRotationMetric: RotationMetric = .allAxes
+    let session: DhikrSession? // Optional session for chart naming
+    @State private var selectedAccelerationMetric: AccelerationMetric = .userAccelMagnitude
+    @State private var selectedRotationMetric: RotationMetric = .rotationMagnitude
+    @State private var showingFullScreenChart = false
+    @State private var fullScreenChartType: ChartType = .acceleration
     
     enum AccelerationMetric: String, CaseIterable {
-        case allAxes = "All Axes"
-        case magnitude = "Magnitude"
+        case userAccelMagnitude = "UserAccel Magnitude (Pinch Spikes)"
+        case gravityWaves = "Gravity Waves (Gait)"
+        case userAccelAxes = "UserAccel Axes"
+        case gravityAxes = "Gravity Axes"
+        case totalAccelMagnitude = "Total Accel Magnitude"
+    }
+    
+    enum RotationMetric: String, CaseIterable {
+        case rotationMagnitude = "Rotation Magnitude (Pinch Spikes)"
+        case rotationAxes = "Rotation Axes"
         case xAxis = "X Axis"
         case yAxis = "Y Axis"
         case zAxis = "Z Axis"
     }
     
-    enum RotationMetric: String, CaseIterable {
-        case allAxes = "All Axes"
-        case magnitude = "Magnitude"
-        case xAxis = "X Axis"
-        case yAxis = "Y Axis"
-        case zAxis = "Z Axis"
+    enum ChartType {
+        case acceleration
+        case rotation
     }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text("Sensor Data Visualization")
-                .font(.headline)
-                .fontWeight(.semibold)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Sensor Data Visualization")
+                    .font(.headline)
+                    .fontWeight(.semibold)
+                
+                Text("Research-grade plots: high-res timestamps, gravity waves, pinch spikes, all sensor axes")
+                    .font(.caption)
+                    .foregroundColor(.blue)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.blue.opacity(0.1))
+                    .cornerRadius(6)
+            }
             
             // Acceleration Chart
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("Acceleration")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Acceleration Analysis")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                        Text(accelerationChartDescription)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
                     
                     Spacer()
                     
@@ -548,52 +571,90 @@ struct SensorDataPreviewCard: View {
                 }
                 
                 Chart {
-                    if selectedAccelerationMetric == .allAxes {
+                    switch selectedAccelerationMetric {
+                    case .userAccelAxes:
                         ForEach(Array(accelerationChartData.enumerated()), id: \.offset) { index, dataPoint in
                             LineMark(
                                 x: .value("Time", dataPoint.time),
-                                y: .value("Acceleration", dataPoint.x),
-                                series: .value("Axis", "X")
+                                y: .value("UserAccel", dataPoint.userAccelX),
+                                series: .value("Axis", "UserAccel X")
                             )
-                            .interpolationMethod(.linear)
+                            .interpolationMethod(.catmullRom)
                             .foregroundStyle(.blue)
-                            .lineStyle(StrokeStyle(lineWidth: 1, lineCap: .butt, lineJoin: .miter))
+                            .lineStyle(StrokeStyle(lineWidth: 1.5))
                         }
-                        
                         ForEach(Array(accelerationChartData.enumerated()), id: \.offset) { index, dataPoint in
                             LineMark(
                                 x: .value("Time", dataPoint.time),
-                                y: .value("Acceleration", dataPoint.y),
-                                series: .value("Axis", "Y")
+                                y: .value("UserAccel", dataPoint.userAccelY),
+                                series: .value("Axis", "UserAccel Y")
                             )
-                            .interpolationMethod(.linear)
+                            .interpolationMethod(.catmullRom)
                             .foregroundStyle(.orange)
-                            .lineStyle(StrokeStyle(lineWidth: 1, lineCap: .butt, lineJoin: .miter))
+                            .lineStyle(StrokeStyle(lineWidth: 1.5))
                         }
-                        
                         ForEach(Array(accelerationChartData.enumerated()), id: \.offset) { index, dataPoint in
                             LineMark(
                                 x: .value("Time", dataPoint.time),
-                                y: .value("Acceleration", dataPoint.z),
-                                series: .value("Axis", "Z")
+                                y: .value("UserAccel", dataPoint.userAccelZ),
+                                series: .value("Axis", "UserAccel Z")
                             )
-                            .interpolationMethod(.linear)
+                            .interpolationMethod(.catmullRom)
                             .foregroundStyle(.green)
-                            .lineStyle(StrokeStyle(lineWidth: 1, lineCap: .butt, lineJoin: .miter))
+                            .lineStyle(StrokeStyle(lineWidth: 1.5))
                         }
-                    } else {
+                        
+                    case .gravityAxes:
+                        ForEach(Array(accelerationChartData.enumerated()), id: \.offset) { index, dataPoint in
+                            LineMark(
+                                x: .value("Time", dataPoint.time),
+                                y: .value("Gravity", dataPoint.gravityX),
+                                series: .value("Axis", "Gravity X")
+                            )
+                            .interpolationMethod(.catmullRom)
+                            .foregroundStyle(.blue)
+                            .lineStyle(StrokeStyle(lineWidth: 2))
+                        }
+                        ForEach(Array(accelerationChartData.enumerated()), id: \.offset) { index, dataPoint in
+                            LineMark(
+                                x: .value("Time", dataPoint.time),
+                                y: .value("Gravity", dataPoint.gravityY),
+                                series: .value("Axis", "Gravity Y")
+                            )
+                            .interpolationMethod(.catmullRom)
+                            .foregroundStyle(.orange)
+                            .lineStyle(StrokeStyle(lineWidth: 2))
+                        }
+                        ForEach(Array(accelerationChartData.enumerated()), id: \.offset) { index, dataPoint in
+                            LineMark(
+                                x: .value("Time", dataPoint.time),
+                                y: .value("Gravity", dataPoint.gravityZ),
+                                series: .value("Axis", "Gravity Z")
+                            )
+                            .interpolationMethod(.catmullRom)
+                            .foregroundStyle(.green)
+                            .lineStyle(StrokeStyle(lineWidth: 2))
+                        }
+                        
+                    default:
+                        // Single metric plots (magnitude, etc.)
                         ForEach(Array(accelerationChartData.enumerated()), id: \.offset) { index, dataPoint in
                             LineMark(
                                 x: .value("Time", dataPoint.time),
                                 y: .value(selectedAccelerationMetric.rawValue, dataPoint.value)
                             )
-                            .interpolationMethod(.linear)
+                            .interpolationMethod(.catmullRom)
                             .foregroundStyle(.blue)
-                            .lineStyle(StrokeStyle(lineWidth: 1, lineCap: .butt, lineJoin: .miter))
+                            .lineStyle(StrokeStyle(lineWidth: 2))
                         }
                     }
                 }
                 .frame(height: 150)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    fullScreenChartType = .acceleration
+                    showingFullScreenChart = true
+                }
                 .chartXAxis {
                     AxisMarks(position: .bottom) { value in
                         AxisValueLabel {
@@ -621,9 +682,14 @@ struct SensorDataPreviewCard: View {
             // Gyroscope/Rotation Chart
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("Gyroscope")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Gyroscope Analysis")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                        Text(rotationChartDescription)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
                     
                     Spacer()
                     
@@ -637,52 +703,58 @@ struct SensorDataPreviewCard: View {
                 }
                 
                 Chart {
-                    if selectedRotationMetric == .allAxes {
+                    switch selectedRotationMetric {
+                    case .rotationAxes:
                         ForEach(Array(rotationChartData.enumerated()), id: \.offset) { index, dataPoint in
                             LineMark(
                                 x: .value("Time", dataPoint.time),
                                 y: .value("Rotation", dataPoint.x),
-                                series: .value("Axis", "X")
+                                series: .value("Axis", "Rotation X")
                             )
-                            .interpolationMethod(.linear)
+                            .interpolationMethod(.catmullRom)
                             .foregroundStyle(.blue)
-                            .lineStyle(StrokeStyle(lineWidth: 1, lineCap: .butt, lineJoin: .miter))
+                            .lineStyle(StrokeStyle(lineWidth: 1.5))
                         }
-                        
                         ForEach(Array(rotationChartData.enumerated()), id: \.offset) { index, dataPoint in
                             LineMark(
                                 x: .value("Time", dataPoint.time),
                                 y: .value("Rotation", dataPoint.y),
-                                series: .value("Axis", "Y")
+                                series: .value("Axis", "Rotation Y")
                             )
-                            .interpolationMethod(.linear)
+                            .interpolationMethod(.catmullRom)
                             .foregroundStyle(.orange)
-                            .lineStyle(StrokeStyle(lineWidth: 1, lineCap: .butt, lineJoin: .miter))
+                            .lineStyle(StrokeStyle(lineWidth: 1.5))
                         }
-                        
                         ForEach(Array(rotationChartData.enumerated()), id: \.offset) { index, dataPoint in
                             LineMark(
                                 x: .value("Time", dataPoint.time),
                                 y: .value("Rotation", dataPoint.z),
-                                series: .value("Axis", "Z")
+                                series: .value("Axis", "Rotation Z")
                             )
-                            .interpolationMethod(.linear)
+                            .interpolationMethod(.catmullRom)
                             .foregroundStyle(.green)
-                            .lineStyle(StrokeStyle(lineWidth: 1, lineCap: .butt, lineJoin: .miter))
+                            .lineStyle(StrokeStyle(lineWidth: 1.5))
                         }
-                    } else {
+                        
+                    default:
+                        // Single metric plots (magnitude, individual axes)
                         ForEach(Array(rotationChartData.enumerated()), id: \.offset) { index, dataPoint in
                             LineMark(
                                 x: .value("Time", dataPoint.time),
                                 y: .value(selectedRotationMetric.rawValue, dataPoint.value)
                             )
-                            .interpolationMethod(.linear)
+                            .interpolationMethod(.catmullRom)
                             .foregroundStyle(.orange)
-                            .lineStyle(StrokeStyle(lineWidth: 1, lineCap: .butt, lineJoin: .miter))
+                            .lineStyle(StrokeStyle(lineWidth: 2))
                         }
                     }
                 }
                 .frame(height: 150)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    fullScreenChartType = .rotation
+                    showingFullScreenChart = true
+                }
                 .chartXAxis {
                     AxisMarks(position: .bottom) { value in
                         AxisValueLabel {
@@ -745,41 +817,58 @@ struct SensorDataPreviewCard: View {
         .padding()
         .background(Color(.systemBackground))
         .cornerRadius(16)
+        .sheet(isPresented: $showingFullScreenChart) {
+            FullScreenChartView(
+                sensorData: sensorData,
+                session: session,
+                chartType: fullScreenChartType,
+                accelerationMetric: selectedAccelerationMetric,
+                rotationMetric: selectedRotationMetric
+            )
+        }
     }
     
-    private var accelerationChartData: [(time: Double, x: Double, y: Double, z: Double, value: Double)] {
+    private var accelerationChartData: [(time: Double, userAccelX: Double, userAccelY: Double, userAccelZ: Double, gravityX: Double, gravityY: Double, gravityZ: Double, value: Double)] {
         guard !sensorData.isEmpty else { return [] }
         
-        let startTime = sensorData.first!.timestamp.timeIntervalSinceReferenceDate
+        // Use high-resolution motion timestamps per research guide 
+        let startTime = sensorData.first!.motionTimestamp
         
-        // Downsample data for better visual jagged effect and performance
-        let downsampleFactor = max(1, sensorData.count / 100) // Aim for ~100 points max
+        // Downsample data for performance - aim for ~200 points for smooth curves
+        let downsampleFactor = max(1, sensorData.count / 200)
         let downsampledData = stride(from: 0, to: sensorData.count, by: downsampleFactor).map {
             sensorData[$0]
         }
         
         return downsampledData.map { reading in
-            let timeOffset = reading.timestamp.timeIntervalSinceReferenceDate - startTime
+            let timeOffset = reading.motionTimestamp - startTime
             let value: Double
             
             switch selectedAccelerationMetric {
-            case .magnitude:
-                value = reading.accelerationMagnitude
-            case .xAxis:
-                value = reading.userAcceleration.x
-            case .yAxis:
-                value = reading.userAcceleration.y
-            case .zAxis:
-                value = reading.userAcceleration.z
-            case .allAxes:
-                value = 0.0 // Not used when showing all axes
+            case .userAccelMagnitude:
+                // UserAcceleration magnitude (pinch spikes)
+                value = sqrt(pow(reading.userAcceleration.x, 2) + pow(reading.userAcceleration.y, 2) + pow(reading.userAcceleration.z, 2))
+            case .gravityWaves:
+                // Gravity magnitude (smooth gait waves)
+                value = sqrt(pow(reading.gravity.x, 2) + pow(reading.gravity.y, 2) + pow(reading.gravity.z, 2))
+            case .totalAccelMagnitude:
+                // Total acceleration magnitude (gravity + userAccel)
+                let totalX = reading.gravity.x + reading.userAcceleration.x
+                let totalY = reading.gravity.y + reading.userAcceleration.y
+                let totalZ = reading.gravity.z + reading.userAcceleration.z
+                value = sqrt(pow(totalX, 2) + pow(totalY, 2) + pow(totalZ, 2))
+            case .userAccelAxes, .gravityAxes:
+                value = 0.0 // Not used for multi-axis plots
             }
             
             return (
                 time: timeOffset,
-                x: reading.userAcceleration.x,
-                y: reading.userAcceleration.y,
-                z: reading.userAcceleration.z,
+                userAccelX: reading.userAcceleration.x,
+                userAccelY: reading.userAcceleration.y,
+                userAccelZ: reading.userAcceleration.z,
+                gravityX: reading.gravity.x,
+                gravityY: reading.gravity.y,
+                gravityZ: reading.gravity.z,
                 value: value
             )
         }
@@ -788,29 +877,31 @@ struct SensorDataPreviewCard: View {
     private var rotationChartData: [(time: Double, x: Double, y: Double, z: Double, value: Double)] {
         guard !sensorData.isEmpty else { return [] }
         
-        let startTime = sensorData.first!.timestamp.timeIntervalSinceReferenceDate
+        // Use high-resolution motion timestamps per research guide 
+        let startTime = sensorData.first!.motionTimestamp
         
-        // Downsample data for better visual jagged effect and performance
-        let downsampleFactor = max(1, sensorData.count / 100) // Aim for ~100 points max
+        // Downsample data for performance - aim for ~200 points for smooth curves
+        let downsampleFactor = max(1, sensorData.count / 200)
         let downsampledData = stride(from: 0, to: sensorData.count, by: downsampleFactor).map {
             sensorData[$0]
         }
         
         return downsampledData.map { reading in
-            let timeOffset = reading.timestamp.timeIntervalSinceReferenceDate - startTime
+            let timeOffset = reading.motionTimestamp - startTime
             let value: Double
             
             switch selectedRotationMetric {
-            case .magnitude:
-                value = reading.rotationMagnitude
+            case .rotationMagnitude:
+                // Rotation magnitude (pinch spikes)
+                value = sqrt(pow(reading.rotationRate.x, 2) + pow(reading.rotationRate.y, 2) + pow(reading.rotationRate.z, 2))
             case .xAxis:
                 value = reading.rotationRate.x
             case .yAxis:
                 value = reading.rotationRate.y
             case .zAxis:
                 value = reading.rotationRate.z
-            case .allAxes:
-                value = 0.0 // Not used when showing all axes
+            case .rotationAxes:
+                value = 0.0 // Not used for multi-axis plots
             }
             
             return (
@@ -825,7 +916,38 @@ struct SensorDataPreviewCard: View {
     
     private var duration: Double {
         guard sensorData.count > 1 else { return 0 }
-        return sensorData.last!.timestamp.timeIntervalSince(sensorData.first!.timestamp)
+        // Use high-resolution motion timestamps for precise duration
+        return sensorData.last!.motionTimestamp - sensorData.first!.motionTimestamp
+    }
+    
+    private var accelerationChartDescription: String {
+        switch selectedAccelerationMetric {
+        case .userAccelMagnitude:
+            return "Shows pinch spikes (6-22Hz band) - high-frequency movements"
+        case .gravityWaves:
+            return "Shows smooth gait waves (0-2Hz band) - like Sensor Logger"
+        case .userAccelAxes:
+            return "Gravity-removed acceleration on X/Y/Z axes (g units)"
+        case .gravityAxes:
+            return "Gravity component showing arm tilt and gait waves (g units)"
+        case .totalAccelMagnitude:
+            return "Total acceleration magnitude (gravity + userAccel)"
+        }
+    }
+    
+    private var rotationChartDescription: String {
+        switch selectedRotationMetric {
+        case .rotationMagnitude:
+            return "Shows pinch spikes - angular velocity magnitude (rad/s)"
+        case .rotationAxes:
+            return "Angular velocity on X/Y/Z axes (rad/s)"
+        case .xAxis:
+            return "X-axis angular velocity (rad/s)"
+        case .yAxis:
+            return "Y-axis angular velocity (rad/s)"
+        case .zAxis:
+            return "Z-axis angular velocity (rad/s)"
+        }
     }
 }
 
@@ -833,7 +955,7 @@ struct SessionExportView: View {
     let session: DhikrSession
     @ObservedObject private var dataManager = PhoneSessionManager.shared
     @Environment(\.presentationMode) var presentationMode
-    @State private var exportFormat = "CSV"
+    @AppStorage("exportFormat") private var exportFormat: String = "JSON"
     @State private var includeMetadata = true
     @State private var showingShareSheet = false
     @State private var exportURL: URL?
@@ -851,11 +973,20 @@ struct SessionExportView: View {
                     Text("Export Options")
                         .font(.headline)
                     
-                    Picker("Format", selection: $exportFormat) {
-                        Text("CSV").tag("CSV")
-                        Text("JSON").tag("JSON")
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Format: \(exportFormat)")
+                                .fontWeight(.medium)
+                            Spacer()
+                            Text("(Set in Settings)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Text("Change format in Settings → Data Export")
+                            .font(.caption)
+                            .foregroundColor(.blue)
                     }
-                    .pickerStyle(.segmented)
                     
                     Toggle("Include Metadata", isOn: $includeMetadata)
                 }
@@ -917,10 +1048,13 @@ struct SessionExportView: View {
         
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                // Use temporary directory for sharing
-                let tempDirectory = FileManager.default.temporaryDirectory
+                // Use Documents directory for iOS file sharing compatibility
+                guard let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+                    throw NSError(domain: "ExportError", code: 2, userInfo: [NSLocalizedDescriptionKey: "Could not access Documents directory"])
+                }
+                
                 let fileName = "session_\(self.session.id.uuidString.prefix(8))_\(Int(Date().timeIntervalSince1970)).\(self.exportFormat.lowercased())"
-                let fileURL = tempDirectory.appendingPathComponent(fileName)
+                var fileURL = documentsDirectory.appendingPathComponent(fileName)
                 
                 // Remove existing file if it exists
                 if FileManager.default.fileExists(atPath: fileURL.path) {
@@ -934,7 +1068,18 @@ struct SessionExportView: View {
                     content = self.generateJSON(sensorData: sensorData, session: self.session, includeMetadata: self.includeMetadata)
                 }
                 
+                // Write file with proper options for iOS sharing
                 try content.write(to: fileURL, atomically: true, encoding: .utf8)
+                
+                // Set basic file attributes (avoid collaboration features that cause errors)
+                do {
+                    var resourceValues = URLResourceValues()
+                    resourceValues.isExcludedFromBackup = true
+                    try fileURL.setResourceValues(resourceValues)
+                } catch {
+                    print("⚠️ Could not set file resource values (non-critical): \(error)")
+                    // Continue without setting resource values - file sharing will still work
+                }
                 
                 // Verify file was created and has content
                 let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
@@ -943,6 +1088,9 @@ struct SessionExportView: View {
                 guard fileSize > 0 else {
                     throw NSError(domain: "ExportError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Generated file is empty"])
                 }
+                
+                print("✅ Successfully created export file: \(fileURL.path)")
+                print("📁 File size: \(ByteCountFormatter.string(fromByteCount: fileSize, countStyle: .file))")
                 
                 DispatchQueue.main.async {
                     self.isExporting = false
@@ -964,6 +1112,9 @@ struct SessionExportView: View {
         var csv = ""
         
         if includeMetadata {
+            csv += "# app=DhikrCounter version=1.0\n"
+            csv += "# using_frame=xArbitraryCorrectedZVertical\n" 
+            csv += "# update_interval_s=0.010000\n"
             csv += "# Session ID: \(session.id.uuidString)\n"
             csv += "# Start Time: \(session.startTime)\n"
             csv += "# Duration: \(session.sessionDuration)s\n"
@@ -971,12 +1122,30 @@ struct SessionExportView: View {
             csv += "#\n"
         }
         
-        csv += "timestamp,accel_x,accel_y,accel_z,gyro_x,gyro_y,gyro_z\n"
+        // Research-grade CSV format per pinch collection advice document
+        csv += "time_s,epoch_s,userAccelerationX,userAccelerationY,userAccelerationZ,gravityX,gravityY,gravityZ,rotationRateX,rotationRateY,rotationRateZ,attitude_qW,attitude_qX,attitude_qY,attitude_qZ\n"
         
         for reading in sensorData {
-            csv += "\(reading.timestamp.timeIntervalSinceReferenceDate),"
-            csv += "\(reading.userAcceleration.x),\(reading.userAcceleration.y),\(reading.userAcceleration.z),"
-            csv += "\(reading.rotationRate.x),\(reading.rotationRate.y),\(reading.rotationRate.z)\n"
+            // Use high-resolution timestamps as per research guide
+            let timeS = String(format: "%.6f", reading.motionTimestamp)
+            let epochS = String(format: "%.6f", reading.epochTimestamp)
+            
+            // All sensor values with 6-decimal precision 
+            let userAccelX = String(format: "%.6f", reading.userAcceleration.x)
+            let userAccelY = String(format: "%.6f", reading.userAcceleration.y) 
+            let userAccelZ = String(format: "%.6f", reading.userAcceleration.z)
+            let gravityX = String(format: "%.6f", reading.gravity.x)
+            let gravityY = String(format: "%.6f", reading.gravity.y)
+            let gravityZ = String(format: "%.6f", reading.gravity.z)
+            let rotationX = String(format: "%.6f", reading.rotationRate.x)
+            let rotationY = String(format: "%.6f", reading.rotationRate.y)
+            let rotationZ = String(format: "%.6f", reading.rotationRate.z)
+            let attitudeW = String(format: "%.6f", reading.attitude.w)
+            let attitudeX = String(format: "%.6f", reading.attitude.x)
+            let attitudeY = String(format: "%.6f", reading.attitude.y)
+            let attitudeZ = String(format: "%.6f", reading.attitude.z)
+            
+            csv += "\(timeS),\(epochS),\(userAccelX),\(userAccelY),\(userAccelZ),\(gravityX),\(gravityY),\(gravityZ),\(rotationX),\(rotationY),\(rotationZ),\(attitudeW),\(attitudeX),\(attitudeY),\(attitudeZ)\n"
         }
         
         return csv
@@ -987,6 +1156,10 @@ struct SessionExportView: View {
         
         if includeMetadata {
             json["metadata"] = [
+                "app": "DhikrCounter",
+                "version": "1.0", 
+                "using_frame": "xArbitraryCorrectedZVertical",
+                "update_interval_s": 0.010000,
                 "sessionId": session.id.uuidString,
                 "startTime": session.startTime.timeIntervalSinceReferenceDate,
                 "duration": session.sessionDuration,
@@ -996,16 +1169,28 @@ struct SessionExportView: View {
         
         let readings = sensorData.map { reading in
             return [
-                "timestamp": reading.timestamp.timeIntervalSinceReferenceDate,
+                "time_s": reading.motionTimestamp,
+                "epoch_s": reading.epochTimestamp,
                 "userAcceleration": [
                     "x": reading.userAcceleration.x,
                     "y": reading.userAcceleration.y,
                     "z": reading.userAcceleration.z
                 ],
+                "gravity": [
+                    "x": reading.gravity.x,
+                    "y": reading.gravity.y,
+                    "z": reading.gravity.z
+                ],
                 "rotationRate": [
                     "x": reading.rotationRate.x,
                     "y": reading.rotationRate.y,
                     "z": reading.rotationRate.z
+                ],
+                "attitude": [
+                    "w": reading.attitude.w,
+                    "x": reading.attitude.x,
+                    "y": reading.attitude.y,
+                    "z": reading.attitude.z
                 ]
             ]
         }
@@ -1025,14 +1210,27 @@ struct ShareSheet: UIViewControllerRepresentable {
     let activityItems: [Any]
     
     func makeUIViewController(context: Context) -> UIActivityViewController {
+        // Create activity view controller with basic configuration
         let activityViewController = UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
         
-        // Set completion handler to clean up temporary files
-        activityViewController.completionWithItemsHandler = { _, _, _, _ in
-            // Clean up temporary files if they exist
-            for item in activityItems {
-                if let url = item as? URL, url.path.contains("tmp") {
-                    try? FileManager.default.removeItem(at: url)
+        // Disable collaboration features that cause iOS errors
+        activityViewController.excludedActivityTypes = [
+            .collaborationInviteWithLink,
+            .collaborationCopyLink
+        ]
+        
+        // Set completion handler to clean up exported files
+        activityViewController.completionWithItemsHandler = { _, completed, _, _ in
+            // Only clean up if sharing completed successfully
+            if completed {
+                // Clean up exported files from Documents directory after sharing
+                for item in activityItems {
+                    if let url = item as? URL, url.lastPathComponent.hasPrefix("session_") {
+                        DispatchQueue.global(qos: .background).async {
+                            try? FileManager.default.removeItem(at: url)
+                            print("🗑️ Cleaned up exported file: \(url.lastPathComponent)")
+                        }
+                    }
                 }
             }
         }
@@ -1041,6 +1239,509 @@ struct ShareSheet: UIViewControllerRepresentable {
     }
     
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+// MARK: - Image with Filename Helper
+
+class ImageWithFilename: NSObject, UIActivityItemSource {
+    let image: UIImage
+    let filename: String
+    
+    init(image: UIImage, filename: String) {
+        self.image = image
+        self.filename = filename
+        super.init()
+    }
+    
+    func activityViewControllerPlaceholderItem(_ activityViewController: UIActivityViewController) -> Any {
+        return image
+    }
+    
+    func activityViewController(_ activityViewController: UIActivityViewController, itemForActivityType activityType: UIActivity.ActivityType?) -> Any? {
+        return image
+    }
+    
+    func activityViewController(_ activityViewController: UIActivityViewController, subjectForActivityType activityType: UIActivity.ActivityType?) -> String {
+        return filename.replacingOccurrences(of: ".png", with: "")
+    }
+    
+    func activityViewController(_ activityViewController: UIActivityViewController, dataTypeIdentifierForActivityType activityType: UIActivity.ActivityType?) -> String {
+        return "public.png"
+    }
+}
+
+// MARK: - Full Screen Chart View
+
+struct FullScreenChartView: View {
+    let sensorData: [SensorReading]
+    let session: DhikrSession?
+    let chartType: SensorDataPreviewCard.ChartType
+    let accelerationMetric: SensorDataPreviewCard.AccelerationMetric
+    let rotationMetric: SensorDataPreviewCard.RotationMetric
+    
+    @Environment(\.presentationMode) var presentationMode
+    @State private var showingShareSheet = false
+    @State private var chartImage: UIImage?
+    @State private var tempFileURL: URL?
+    @State private var isExporting = false
+    
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 20) {
+                Text("Research-Grade Sensor Analysis")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .padding(.top)
+                
+                Text(chartDescription)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+                
+                // Full-screen chart
+                chartView
+                    .frame(maxHeight: .infinity)
+                    .padding()
+                    .background(Color(.systemGray6))
+                    .cornerRadius(16)
+                    .padding(.horizontal)
+                
+                // Stats section
+                HStack(spacing: 30) {
+                    VStack {
+                        Text("Samples")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text("\(sensorData.count)")
+                            .font(.title2)
+                            .fontWeight(.semibold)
+                    }
+                    
+                    VStack {
+                        Text("Duration")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(String(format: "%.1fs", duration))
+                            .font(.title2)
+                            .fontWeight(.semibold)
+                    }
+                    
+                    VStack {
+                        Text("Rate")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text("100 Hz")
+                            .font(.title2)
+                            .fontWeight(.semibold)
+                    }
+                }
+                .padding()
+                .background(Color(.systemBackground))
+                .cornerRadius(12)
+                .padding(.horizontal)
+                
+                Spacer()
+            }
+            .navigationBarItems(
+                leading: Button("Done") {
+                    presentationMode.wrappedValue.dismiss()
+                },
+                trailing: Button(action: exportChart) {
+                    HStack {
+                        if isExporting {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                        } else {
+                            Image(systemName: "square.and.arrow.up")
+                        }
+                        Text(isExporting ? "Exporting..." : "Export")
+                    }
+                }
+                .disabled(isExporting)
+            )
+        }
+        .sheet(isPresented: $showingShareSheet) {
+            if let tempFileURL = tempFileURL {
+                ShareSheet(activityItems: [tempFileURL])
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private var chartView: some View {
+        switch chartType {
+        case .acceleration:
+            accelerationChart
+        case .rotation:
+            rotationChart
+        }
+    }
+    
+    private var accelerationChart: some View {
+        Chart {
+            switch accelerationMetric {
+            case .userAccelAxes:
+                ForEach(Array(accelerationChartData.enumerated()), id: \.offset) { index, dataPoint in
+                    LineMark(
+                        x: .value("Time", dataPoint.time),
+                        y: .value("UserAccel", dataPoint.userAccelX),
+                        series: .value("Axis", "UserAccel X")
+                    )
+                    .interpolationMethod(.catmullRom)
+                    .foregroundStyle(.blue)
+                    .lineStyle(StrokeStyle(lineWidth: 2))
+                }
+                ForEach(Array(accelerationChartData.enumerated()), id: \.offset) { index, dataPoint in
+                    LineMark(
+                        x: .value("Time", dataPoint.time),
+                        y: .value("UserAccel", dataPoint.userAccelY),
+                        series: .value("Axis", "UserAccel Y")
+                    )
+                    .interpolationMethod(.catmullRom)
+                    .foregroundStyle(.orange)
+                    .lineStyle(StrokeStyle(lineWidth: 2))
+                }
+                ForEach(Array(accelerationChartData.enumerated()), id: \.offset) { index, dataPoint in
+                    LineMark(
+                        x: .value("Time", dataPoint.time),
+                        y: .value("UserAccel", dataPoint.userAccelZ),
+                        series: .value("Axis", "UserAccel Z")
+                    )
+                    .interpolationMethod(.catmullRom)
+                    .foregroundStyle(.green)
+                    .lineStyle(StrokeStyle(lineWidth: 2))
+                }
+                
+            case .gravityAxes:
+                ForEach(Array(accelerationChartData.enumerated()), id: \.offset) { index, dataPoint in
+                    LineMark(
+                        x: .value("Time", dataPoint.time),
+                        y: .value("Gravity", dataPoint.gravityX),
+                        series: .value("Axis", "Gravity X")
+                    )
+                    .interpolationMethod(.catmullRom)
+                    .foregroundStyle(.blue)
+                    .lineStyle(StrokeStyle(lineWidth: 2))
+                }
+                ForEach(Array(accelerationChartData.enumerated()), id: \.offset) { index, dataPoint in
+                    LineMark(
+                        x: .value("Time", dataPoint.time),
+                        y: .value("Gravity", dataPoint.gravityY),
+                        series: .value("Axis", "Gravity Y")
+                    )
+                    .interpolationMethod(.catmullRom)
+                    .foregroundStyle(.orange)
+                    .lineStyle(StrokeStyle(lineWidth: 2))
+                }
+                ForEach(Array(accelerationChartData.enumerated()), id: \.offset) { index, dataPoint in
+                    LineMark(
+                        x: .value("Time", dataPoint.time),
+                        y: .value("Gravity", dataPoint.gravityZ),
+                        series: .value("Axis", "Gravity Z")
+                    )
+                    .interpolationMethod(.catmullRom)
+                    .foregroundStyle(.green)
+                    .lineStyle(StrokeStyle(lineWidth: 2))
+                }
+                
+            default:
+                ForEach(Array(accelerationChartData.enumerated()), id: \.offset) { index, dataPoint in
+                    LineMark(
+                        x: .value("Time", dataPoint.time),
+                        y: .value(accelerationMetric.rawValue, dataPoint.value)
+                    )
+                    .interpolationMethod(.catmullRom)
+                    .foregroundStyle(.blue)
+                    .lineStyle(StrokeStyle(lineWidth: 3))
+                }
+            }
+        }
+        .chartXAxis {
+            AxisMarks(position: .bottom) { value in
+                AxisValueLabel {
+                    if let timeValue = value.as(Double.self) {
+                        Text(String(format: "%.1fs", timeValue))
+                            .font(.caption)
+                    }
+                }
+                AxisGridLine()
+            }
+        }
+        .chartYAxis {
+            AxisMarks(position: .leading) { value in
+                AxisValueLabel {
+                    if let yValue = value.as(Double.self) {
+                        Text(String(format: "%.3f", yValue))
+                            .font(.caption)
+                    }
+                }
+                AxisGridLine()
+            }
+        }
+    }
+    
+    private var rotationChart: some View {
+        Chart {
+            switch rotationMetric {
+            case .rotationAxes:
+                ForEach(Array(rotationChartData.enumerated()), id: \.offset) { index, dataPoint in
+                    LineMark(
+                        x: .value("Time", dataPoint.time),
+                        y: .value("Rotation", dataPoint.x),
+                        series: .value("Axis", "Rotation X")
+                    )
+                    .interpolationMethod(.catmullRom)
+                    .foregroundStyle(.blue)
+                    .lineStyle(StrokeStyle(lineWidth: 2))
+                }
+                ForEach(Array(rotationChartData.enumerated()), id: \.offset) { index, dataPoint in
+                    LineMark(
+                        x: .value("Time", dataPoint.time),
+                        y: .value("Rotation", dataPoint.y),
+                        series: .value("Axis", "Rotation Y")
+                    )
+                    .interpolationMethod(.catmullRom)
+                    .foregroundStyle(.orange)
+                    .lineStyle(StrokeStyle(lineWidth: 2))
+                }
+                ForEach(Array(rotationChartData.enumerated()), id: \.offset) { index, dataPoint in
+                    LineMark(
+                        x: .value("Time", dataPoint.time),
+                        y: .value("Rotation", dataPoint.z),
+                        series: .value("Axis", "Rotation Z")
+                    )
+                    .interpolationMethod(.catmullRom)
+                    .foregroundStyle(.green)
+                    .lineStyle(StrokeStyle(lineWidth: 2))
+                }
+                
+            default:
+                ForEach(Array(rotationChartData.enumerated()), id: \.offset) { index, dataPoint in
+                    LineMark(
+                        x: .value("Time", dataPoint.time),
+                        y: .value(rotationMetric.rawValue, dataPoint.value)
+                    )
+                    .interpolationMethod(.catmullRom)
+                    .foregroundStyle(.orange)
+                    .lineStyle(StrokeStyle(lineWidth: 3))
+                }
+            }
+        }
+        .chartXAxis {
+            AxisMarks(position: .bottom) { value in
+                AxisValueLabel {
+                    if let timeValue = value.as(Double.self) {
+                        Text(String(format: "%.1fs", timeValue))
+                            .font(.caption)
+                    }
+                }
+                AxisGridLine()
+            }
+        }
+        .chartYAxis {
+            AxisMarks(position: .leading) { value in
+                AxisValueLabel {
+                    if let yValue = value.as(Double.self) {
+                        Text(String(format: "%.3f", yValue))
+                            .font(.caption)
+                    }
+                }
+                AxisGridLine()
+            }
+        }
+    }
+    
+    // Chart export functionality
+    private func exportChart() {
+        isExporting = true
+        
+        // Render on background queue to avoid blocking UI
+        DispatchQueue.global(qos: .userInitiated).async {
+            // Optimize rendering size based on orientation and device capabilities
+            let isVertical = UIDevice.current.orientation.isPortrait || UIDevice.current.orientation == .unknown
+            let width: CGFloat = isVertical ? 800 : 1200
+            let height: CGFloat = isVertical ? 1000 : 600
+            
+            let renderer = ImageRenderer(content: self.chartView.frame(width: width, height: height))
+            // Use lower scale for vertical mode to prevent memory issues
+            renderer.scale = isVertical ? min(2.0, UIScreen.main.scale) : UIScreen.main.scale
+            
+            if let image = renderer.uiImage {
+                // Generate unique filename
+                let filename = self.generateUniqueFilename()
+                
+                // Create temporary file with proper name for sharing
+                if let imageData = image.pngData() {
+                    let tempDirectory = FileManager.default.temporaryDirectory
+                    let fileURL = tempDirectory.appendingPathComponent(filename)
+                    
+                    do {
+                        try imageData.write(to: fileURL)
+                        
+                        DispatchQueue.main.async {
+                            self.isExporting = false
+                            self.chartImage = image
+                            self.tempFileURL = fileURL
+                            self.showingShareSheet = true
+                        }
+                    } catch {
+                        DispatchQueue.main.async {
+                            self.isExporting = false
+                            print("Failed to create temp file: \(error)")
+                        }
+                    }
+                } else {
+                    DispatchQueue.main.async {
+                        self.isExporting = false
+                    }
+                }
+            } else {
+                DispatchQueue.main.async {
+                    self.isExporting = false
+                }
+            }
+        }
+    }
+    
+    private func generateUniqueFilename() -> String {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyyMMdd_HHmmss"
+        let timestamp = dateFormatter.string(from: Date())
+        
+        let chartTypeString = chartType == .acceleration ? "Accel" : "Gyro"
+        let metricString: String
+        
+        switch chartType {
+        case .acceleration:
+            metricString = accelerationMetric.rawValue.replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "(", with: "").replacingOccurrences(of: ")", with: "")
+        case .rotation:
+            metricString = rotationMetric.rawValue.replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "(", with: "").replacingOccurrences(of: ")", with: "")
+        }
+        
+        let sessionPrefix = session?.id.uuidString.prefix(8) ?? "Unknown"
+        
+        return "DhikrChart_\(sessionPrefix)_\(chartTypeString)_\(metricString)_\(timestamp).png"
+    }
+    
+    // Computed properties
+    private var chartDescription: String {
+        switch chartType {
+        case .acceleration:
+            switch accelerationMetric {
+            case .userAccelMagnitude:
+                return "UserAcceleration Magnitude showing pinch spikes (6-22Hz band) - gravity-removed high-frequency movements"
+            case .gravityWaves:
+                return "Gravity Magnitude showing smooth gait waves (0-2Hz band) - arm tilt and walking motion patterns like Sensor Logger"
+            case .userAccelAxes:
+                return "Individual UserAcceleration axes (X/Y/Z) - gravity-removed acceleration components in g units"
+            case .gravityAxes:
+                return "Individual Gravity axes (X/Y/Z) - gravity component showing arm orientation and gait patterns in g units"
+            case .totalAccelMagnitude:
+                return "Total Acceleration Magnitude - combination of gravity and user acceleration"
+            }
+        case .rotation:
+            switch rotationMetric {
+            case .rotationMagnitude:
+                return "Rotation Rate Magnitude showing pinch spikes - angular velocity magnitude in rad/s"
+            case .rotationAxes:
+                return "Individual Rotation axes (X/Y/Z) - angular velocity components in rad/s"
+            case .xAxis:
+                return "X-axis angular velocity in rad/s"
+            case .yAxis:
+                return "Y-axis angular velocity in rad/s"
+            case .zAxis:
+                return "Z-axis angular velocity in rad/s"
+            }
+        }
+    }
+    
+    private var accelerationChartData: [(time: Double, userAccelX: Double, userAccelY: Double, userAccelZ: Double, gravityX: Double, gravityY: Double, gravityZ: Double, value: Double)] {
+        guard !sensorData.isEmpty else { return [] }
+        
+        // Use high-resolution motion timestamps per research guide 
+        let startTime = sensorData.first!.motionTimestamp
+        
+        // Optimized data points for performance vs quality balance
+        let downsampleFactor = max(1, sensorData.count / 300)
+        let downsampledData = stride(from: 0, to: sensorData.count, by: downsampleFactor).map {
+            sensorData[$0]
+        }
+        
+        return downsampledData.map { reading in
+            let timeOffset = reading.motionTimestamp - startTime
+            let value: Double
+            
+            switch accelerationMetric {
+            case .userAccelMagnitude:
+                value = sqrt(pow(reading.userAcceleration.x, 2) + pow(reading.userAcceleration.y, 2) + pow(reading.userAcceleration.z, 2))
+            case .gravityWaves:
+                value = sqrt(pow(reading.gravity.x, 2) + pow(reading.gravity.y, 2) + pow(reading.gravity.z, 2))
+            case .totalAccelMagnitude:
+                let totalX = reading.gravity.x + reading.userAcceleration.x
+                let totalY = reading.gravity.y + reading.userAcceleration.y
+                let totalZ = reading.gravity.z + reading.userAcceleration.z
+                value = sqrt(pow(totalX, 2) + pow(totalY, 2) + pow(totalZ, 2))
+            case .userAccelAxes, .gravityAxes:
+                value = 0.0
+            }
+            
+            return (
+                time: timeOffset,
+                userAccelX: reading.userAcceleration.x,
+                userAccelY: reading.userAcceleration.y,
+                userAccelZ: reading.userAcceleration.z,
+                gravityX: reading.gravity.x,
+                gravityY: reading.gravity.y,
+                gravityZ: reading.gravity.z,
+                value: value
+            )
+        }
+    }
+    
+    private var rotationChartData: [(time: Double, x: Double, y: Double, z: Double, value: Double)] {
+        guard !sensorData.isEmpty else { return [] }
+        
+        // Use high-resolution motion timestamps per research guide 
+        let startTime = sensorData.first!.motionTimestamp
+        
+        // Optimized data points for performance vs quality balance
+        let downsampleFactor = max(1, sensorData.count / 300)
+        let downsampledData = stride(from: 0, to: sensorData.count, by: downsampleFactor).map {
+            sensorData[$0]
+        }
+        
+        return downsampledData.map { reading in
+            let timeOffset = reading.motionTimestamp - startTime
+            let value: Double
+            
+            switch rotationMetric {
+            case .rotationMagnitude:
+                value = sqrt(pow(reading.rotationRate.x, 2) + pow(reading.rotationRate.y, 2) + pow(reading.rotationRate.z, 2))
+            case .xAxis:
+                value = reading.rotationRate.x
+            case .yAxis:
+                value = reading.rotationRate.y
+            case .zAxis:
+                value = reading.rotationRate.z
+            case .rotationAxes:
+                value = 0.0
+            }
+            
+            return (
+                time: timeOffset,
+                x: reading.rotationRate.x,
+                y: reading.rotationRate.y,
+                z: reading.rotationRate.z,
+                value: value
+            )
+        }
+    }
+    
+    private var duration: Double {
+        guard sensorData.count > 1 else { return 0 }
+        return sensorData.last!.motionTimestamp - sensorData.first!.motionTimestamp
+    }
 }
 
 struct EmptyStateView: View {

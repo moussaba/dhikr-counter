@@ -269,6 +269,8 @@ struct SessionManagementView: View {
 }
 
 struct SettingsView: View {
+    @AppStorage("exportFormat") private var exportFormat: String = "JSON"
+    
     var body: some View {
         NavigationStack {
             List {
@@ -280,9 +282,55 @@ struct SettingsView: View {
                 }
                 
                 Section("Data Export") {
-                    SettingRow(title: "Export Format", value: "CSV")
+                    HStack {
+                        Text("Export Format")
+                        Spacer()
+                        Picker("Format", selection: $exportFormat) {
+                            Text("JSON").tag("JSON")
+                            Text("CSV").tag("CSV")
+                        }
+                        .pickerStyle(SegmentedPickerStyle())
+                        .frame(width: 120)
+                        .onChange(of: exportFormat) { _ in
+                            PhoneSessionManager.shared.updateExportFormat()
+                        }
+                    }
+                    
                     SettingRow(title: "Include Raw Sensor Data", value: "Enabled")
                     SettingRow(title: "Include Detection Events", value: "Enabled")
+                }
+                
+                Section("File Access") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Session files are automatically saved to:")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        Button(action: {
+                            if let url = URL(string: "shareddocuments://") {
+                                if UIApplication.shared.canOpenURL(url) {
+                                    UIApplication.shared.open(url)
+                                }
+                            }
+                        }) {
+                            HStack {
+                                Image(systemName: "folder")
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Files App → Dhikr Counter")
+                                        .font(.body)
+                                        .foregroundColor(.primary)
+                                    Text("Session files in app directory")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "arrow.up.right")
+                                    .font(.caption)
+                            }
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+                    .padding(.vertical, 4)
                 }
                 
                 Section("About") {
