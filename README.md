@@ -73,6 +73,10 @@ DhikrCounter/
 ├── Shared/                          # Shared data models
 │   ├── SensorReading.swift          # Sensor data structures
 │   └── DetectionEvent.swift         # Detection event models
+├── analyze_session.py               # Command-line analysis tool
+├── html_report.py                   # HTML report generation
+├── config_template.yaml             # Configuration template
+├── requirements_analysis.txt        # Python dependencies
 ├── Analysis/                        # Jupyter development environment
 │   ├── dhikr_analysis.ipynb         # Main analysis notebook
 │   ├── algorithm_validation.py      # Validation framework
@@ -128,6 +132,107 @@ DhikrCounter/
 3. Build and deploy to Apple Watch Series 9
 4. Install iPhone companion app
 5. Set up Jupyter environment for algorithm development
+
+## Command-Line Analysis Tool
+
+### Overview
+
+The `analyze_session.py` script provides comprehensive offline analysis of dhikr session data exported from the Apple Watch app. It implements the same stationary pinch detection algorithm used on the watch and generates detailed HTML reports with visualizations.
+
+### Installation
+
+1. **Set up Python environment**:
+```bash
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements_analysis.txt
+```
+
+2. **Verify installation**:
+```bash
+python analyze_session.py --help
+```
+
+### Basic Usage
+
+```bash
+# Analyze a session file with default settings
+python analyze_session.py --input session_data.json
+
+# Analyze with custom configuration
+python analyze_session.py --input session_data.json --config config.yaml
+
+# Specify output directory
+python analyze_session.py --input session_data.json --output results/
+```
+
+### Debug Modes
+
+The tool includes comprehensive debugging capabilities:
+
+```bash
+# Detection debug - shows rejection statistics and analysis
+python analyze_session.py --input session_data.json --debug-detection
+
+# Threshold debug - analyzes peaks that don't cross adaptive threshold  
+python analyze_session.py --input session_data.json --debug-threshold
+
+# Enable all debug modes
+python analyze_session.py --input session_data.json --debug-all
+```
+
+### Visual Debug Features
+
+Every analysis automatically includes a **Visual Debug Plot** that shows:
+
+- 📈 **Fusion score** with adaptive threshold
+- ✅ **Accepted events** (green dots)
+- 🔴 **Rejected candidates** color-coded by rejection reason:
+  - **Red**: Refractory period violations
+  - **Orange**: Not local peak
+  - **Pink**: Gate check failures  
+  - **Purple**: Minimum inter-event interval violations
+
+### Output Files
+
+The tool generates:
+
+- **HTML Report** (`analysis_report.html`) - Interactive visualizations and analysis
+- **CSV Events** (`detected_events.csv`) - Detected events for further analysis
+- **JSON Summary** (`analysis_summary.json`) - Analysis metadata and statistics
+
+### Configuration
+
+Create a `config.yaml` file to customize detection parameters:
+
+```yaml
+stationary_params:
+  k_mad: 5.5              # Adaptive threshold sensitivity
+  acc_gate: 0.025         # Acceleration threshold (g)
+  gyro_gate: 0.10         # Gyroscope threshold (rad/s)
+  refractory_s: 0.12      # Refractory period (seconds)
+  min_iei_s: 0.10         # Minimum inter-event interval (seconds)
+
+output:
+  export_html: true       # Generate HTML report
+  export_csv: true        # Export detected events
+  plot_components: true   # Include component analysis charts
+```
+
+### Supported Data Formats
+
+- **JSON**: Complete session files from Apple Watch app
+- **CSV**: Exported sensor data with metadata headers
+
+### Example Analysis Output
+
+```
+📊 Analysis Complete!
+  Events detected: 8
+  Detection rate: 69.2 events/min
+  Session duration: 6.9 seconds
+  Results saved to: analysis_B4BFFF92_20250905_161517
+```
 
 ## Usage
 

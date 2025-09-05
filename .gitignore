@@ -112,3 +112,5 @@ venv.bak/
 *.json
 sensor_data/
 analysis_results/
+data/
+analysis_*/

@@ -42,3 +42,4 @@ Available schemes:
 - File-based storage handles large sensor datasets efficiently  
 - UI shows real metrics from transferred sensor data
 - Debug logging removed from frequently called methods to prevent spam
+- use .venv or venv for python
