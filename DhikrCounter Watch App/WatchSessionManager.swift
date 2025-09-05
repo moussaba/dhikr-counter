@@ -117,32 +117,59 @@ class WatchSessionManager: NSObject, ObservableObject {
         }
     }
     
+    // Helper function to safely format CSV values, handling special cases
+    private func formatCSVValue(_ value: Double) -> String {
+        if value.isNaN {
+            return "NaN"
+        } else if value.isInfinite {
+            return value > 0 ? "Inf" : "-Inf"
+        } else {
+            return String(format: "%.6f", value)
+        }
+    }
+    
     private func createCSVData(sensorData: [SensorReading], detectionEvents: [DetectionEvent], sessionId: UUID) throws -> Data {
         var csvContent = "time_s,epoch_s,userAccelerationX,userAccelerationY,userAccelerationZ,gravityX,gravityY,gravityZ,rotationRateX,rotationRateY,rotationRateZ,attitude_qW,attitude_qX,attitude_qY,attitude_qZ\n"
         
         let startTime = sensorData.first?.motionTimestamp ?? 0.0
+        var invalidValueCount = 0
         
         for reading in sensorData {
             let relativeTime = reading.motionTimestamp - startTime
             let epochTime = reading.epochTimestamp
             
-            let row = String(format: "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n",
-                           relativeTime,
-                           epochTime,
-                           reading.userAcceleration.x,
-                           reading.userAcceleration.y,
-                           reading.userAcceleration.z,
-                           reading.gravity.x,
-                           reading.gravity.y,
-                           reading.gravity.z,
-                           reading.rotationRate.x,
-                           reading.rotationRate.y,
-                           reading.rotationRate.z,
-                           reading.attitude.w,
-                           reading.attitude.x,
-                           reading.attitude.y,
-                           reading.attitude.z)
+            // Validate and format all values
+            let values = [
+                formatCSVValue(relativeTime),
+                formatCSVValue(epochTime),
+                formatCSVValue(reading.userAcceleration.x),
+                formatCSVValue(reading.userAcceleration.y), 
+                formatCSVValue(reading.userAcceleration.z),
+                formatCSVValue(reading.gravity.x),
+                formatCSVValue(reading.gravity.y),
+                formatCSVValue(reading.gravity.z),
+                formatCSVValue(reading.rotationRate.x),
+                formatCSVValue(reading.rotationRate.y),
+                formatCSVValue(reading.rotationRate.z),
+                formatCSVValue(reading.attitude.w),
+                formatCSVValue(reading.attitude.x),
+                formatCSVValue(reading.attitude.y),
+                formatCSVValue(reading.attitude.z)
+            ]
+            
+            // Count invalid values for logging
+            let invalidInThisRow = values.filter { $0.contains("NaN") || $0.contains("Inf") }.count
+            if invalidInThisRow > 0 {
+                invalidValueCount += invalidInThisRow
+            }
+            
+            let row = values.joined(separator: ",") + "\n"
             csvContent += row
+        }
+        
+        // Log data quality information
+        if invalidValueCount > 0 {
+            print("⚠️ CSV export quality warning: \(invalidValueCount) invalid values (NaN/Inf) found and preserved")
         }
         
         guard let data = csvContent.data(using: .utf8) else {
@@ -216,8 +243,18 @@ extension WatchSessionManager: @preconcurrency WCSessionDelegate {
     nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String : Any]) {
         DispatchQueue.main.async {
             if let formatString = applicationContext["exportFormat"] as? String {
-                self.exportFormat = formatString
-                self.transferStatus = "Export format: \(formatString)"
+                // Validate format string and fallback to default if invalid
+                let validFormats = ["JSON", "CSV"]
+                if validFormats.contains(formatString) {
+                    self.exportFormat = formatString
+                    self.transferStatus = "Export format synced: \(formatString)"
+                    print("📱 Export format updated from Phone: \(formatString)")
+                } else {
+                    print("⚠️ Invalid export format received: '\(formatString)', keeping current: \(self.exportFormat)")
+                    self.transferStatus = "Invalid format received, keeping \(self.exportFormat)"
+                }
+            } else {
+                print("⚠️ No valid exportFormat in application context, keeping current: \(self.exportFormat)")
             }
         }
     }
