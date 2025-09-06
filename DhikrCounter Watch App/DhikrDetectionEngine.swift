@@ -3,21 +3,30 @@ import CoreMotion
 import WatchKit
 import HealthKit
 
-class DhikrDetectionEngine: NSObject, ObservableObject {
-    private let motionManager = CMMotionManager()
+class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate {
+    private var motionManager = CMMotionManager()
     private let motionActivityManager = CMMotionActivityManager()
+    
+    // Dedicated motion queue to prevent deallocation mid-session
+    private let motionQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.name = "com.dhikrcounter.motion"
+        queue.qualityOfService = .userInitiated
+        queue.maxConcurrentOperationCount = 1
+        return queue
+    }()
     
     // Researcher's validated parameters
     private let accelerationThreshold: Double = 0.05
     private let gyroscopeThreshold: Double = 0.18
-    private let samplingRate: Double = 100.0
+    private let samplingRate: Double = 50.0  // Reduced from 100Hz for better watchOS sustainability
     private let refractoryPeriod: Double = 0.25
     private let activityThreshold: Double = 2.5
     
     // Buffer management constants
     private let bufferSize = 50
     private let minBufferSizeForStats = 10
-    private let maxLogSize = 12000 // 2 minutes at 100Hz (was 3000/30s)
+    private let maxLogSize = 6000 // 2 minutes at 50Hz (was 12000 for 100Hz)
     private let robustStatsMADConstant = 1.4826
     private let sessionSetupDelay = 3.0 // seconds
     private let pauseDetectionThreshold = 1.0 // activity index
@@ -38,6 +47,8 @@ class DhikrDetectionEngine: NSObject, ObservableObject {
     @Published var pinchCount: Int = 0
     @Published var sessionState: SessionState = .inactive
     @Published var currentMilestone: Int = 0
+    @Published var sessionDuration: TimeInterval = 0.0
+    @Published var lastSessionDuration: TimeInterval = 0.0  // Persists after session ends
     
     // Data logging and transfer (with synchronization)
     private var sessionStartTime: Date?
@@ -46,18 +57,24 @@ class DhikrDetectionEngine: NSObject, ObservableObject {
     private var currentSessionId: UUID?
     private let dataLogQueue = DispatchQueue(label: "com.dhikrcounter.datalog", qos: .userInitiated)
     
+    // Thread-safe sample counting
+    private var sampleCount: Int = 0
+    
     // High-resolution timestamp management
     private var startEpoch: TimeInterval = 0
     
     // Session monitoring
     private var lastDataTimestamp: Date = Date()
-    private var sessionTimeoutTimer: Timer?
+    private var sessionTimeoutTimer: DispatchSourceTimer?
     private let sessionTimeoutInterval: TimeInterval = 3.0 // Alert if no data for 3 seconds
+    
+    // Real-time session timer
+    private var sessionTimer: Timer?
     
     // Background session management (HealthKit)
     private var healthStore = HKHealthStore()
     private var workoutSession: HKWorkoutSession?
-    private var extendedRuntimeSession: WKExtendedRuntimeSession?
+    // WKExtendedRuntimeSession removed - using HKWorkoutSession only
     
     // WatchConnectivity integration  
     private let sessionManager = WatchSessionManager.shared
@@ -128,10 +145,15 @@ class DhikrDetectionEngine: NSObject, ObservableObject {
             // For simulator: start session without motion detection
             sessionState = .setup
             sessionStartTime = Date()
+            sessionDuration = 0.0
+            lastSessionDuration = 0.0  // Clear previous session duration
             pinchCount = 0
             currentMilestone = 0
             currentSessionId = UUID()
             clearLogs()
+            
+            // Start session timer
+            startSessionTimer()
             
             // Provide haptic feedback
             WKInterfaceDevice.current().play(.start)
@@ -148,6 +170,8 @@ class DhikrDetectionEngine: NSObject, ObservableObject {
         
         sessionState = .setup
         sessionStartTime = Date()
+        sessionDuration = 0.0
+        lastSessionDuration = 0.0  // Clear previous session duration
         pinchCount = 0
         currentMilestone = 0
         currentSessionId = UUID()
@@ -155,27 +179,21 @@ class DhikrDetectionEngine: NSObject, ObservableObject {
         // Clear previous session data
         clearLogs()
         
+        // Start session timer
+        startSessionTimer()
+        
         // Start background session to prevent watchOS suspension
         startWorkoutSession()
-        startExtendedRuntimeSession()
+        // Removed startExtendedRuntimeSession() - conflicts with HKWorkoutSession
         
         // Start session monitoring
         startSessionMonitoring()
         
-        motionManager.deviceMotionUpdateInterval = 1.0 / samplingRate
-        motionManager.showsDeviceMovementDisplay = true
-        
-        // Align epoch with Core Motion timestamp (seconds since boot)
-        startEpoch = Date().timeIntervalSince1970 - ProcessInfo.processInfo.systemUptime
-        
-        motionManager.startDeviceMotionUpdates(using: .xArbitraryCorrectedZVertical, to: OperationQueue()) { [weak self] motion, error in
-            guard let self = self, let motion = motion else { 
-                if let error = error {
-                    print("Motion update error: \(error.localizedDescription)")
-                }
-                return 
-            }
-            self.collectRawSensorData(motion)
+        // Core Motion will be started when workout session reaches .running state
+        // (or immediately if no workout session is available)
+        if workoutSession == nil {
+            // No workout session available - start motion immediately
+            startDeviceMotionUpdates()
         }
         
         // Provide haptic feedback for session start
@@ -190,15 +208,17 @@ class DhikrDetectionEngine: NSObject, ObservableObject {
             motionManager.stopDeviceMotionUpdates()
         }
         
-        // Log data summary before transfer
-        print("📊 Collection Summary:")
-        print("   📦 Total sensor readings: \(sensorDataLog.count)")
-        if sensorDataLog.count > 0 {
-            let first = sensorDataLog[0]
-            let last = sensorDataLog[sensorDataLog.count - 1]
-            let duration = last.motionTimestamp - first.motionTimestamp
-            print("   ⏱️ Session duration: \(String(format: "%.2f", duration)) seconds")
-            print("   📈 Average sampling rate: \(String(format: "%.1f", Double(sensorDataLog.count) / duration)) Hz")
+        // Log data summary before transfer (using thread-safe queue)
+        dataLogQueue.sync {
+            print("📊 Collection Summary:")
+            print("   📦 Total sensor readings: \(sensorDataLog.count)")
+            if sensorDataLog.count > 0 {
+                let first = sensorDataLog[0]
+                let last = sensorDataLog[sensorDataLog.count - 1]
+                let duration = last.motionTimestamp - first.motionTimestamp
+                print("   ⏱️ Session duration: \(String(format: "%.2f", duration)) seconds")
+                print("   📈 Average sampling rate: \(String(format: "%.1f", Double(sensorDataLog.count) / max(duration, 0.001))) Hz")
+            }
         }
         
         // Transfer enhanced sensor data to iPhone
@@ -220,10 +240,13 @@ class DhikrDetectionEngine: NSObject, ObservableObject {
         
         // Stop background session
         stopWorkoutSession()
-        stopExtendedRuntimeSession()
+        // Removed stopExtendedRuntimeSession() - no longer using extended runtime
         
         // Stop session monitoring
         stopSessionMonitoring()
+        
+        // Stop session timer
+        stopSessionTimer()
         
         // Provide haptic feedback for session stop
         WKInterfaceDevice.current().play(.stop)
@@ -255,10 +278,7 @@ class DhikrDetectionEngine: NSObject, ObservableObject {
         let rotationRate = motion.rotationRate
         let attitude = motion.attitude.quaternion  // Added attitude quaternions
         
-        // Debug output every 500 samples (5 seconds at 100Hz) 
-        if sensorDataLog.count % 500 == 0 {
-            print("📊 Collected \(sensorDataLog.count + 1) samples")
-        }
+        // Note: Debug output moved to dataLogQueue to avoid thread-unsafe reads
         
         // Create sensor reading for data logging with all required fields (local copies to avoid memory issues)
         let userAccelX = userAccel.x
@@ -292,6 +312,12 @@ class DhikrDetectionEngine: NSObject, ObservableObject {
         dataLogQueue.async { [weak self] in
             guard let self = self else { return }
             self.sensorDataLog.append(sensorReading)
+            self.sampleCount += 1
+            
+            // Debug output every 250 samples (5 seconds at 50Hz) 
+            if self.sampleCount % 250 == 0 {
+                print("📊 Collected \(self.sampleCount) samples")
+            }
             
             // Maintain reasonable log size (remove in chunks to avoid frequent reallocations)
             if self.sensorDataLog.count > self.maxLogSize {
@@ -629,6 +655,7 @@ class DhikrDetectionEngine: NSObject, ObservableObject {
     func clearLogs() {
         sensorDataLog.removeAll(keepingCapacity: false)
         detectionEventLog.removeAll(keepingCapacity: false)
+        sampleCount = 0  // Reset thread-safe sample counter
         
         // Also clear buffers to free memory
         accelerationBuffer.removeAll(keepingCapacity: false)
@@ -651,11 +678,104 @@ class DhikrDetectionEngine: NSObject, ObservableObject {
         }
     }
     
+    var timerText: String {
+        let duration = sessionState != .inactive ? sessionDuration : lastSessionDuration
+        let minutes = Int(duration) / 60
+        let seconds = Int(duration) % 60
+        return String(format: "%02d:%02d", minutes, seconds)
+    }
+    
     private var nextMilestoneCount: Int {
         if pinchCount < 33 { return 33 }
         else if pinchCount < 66 { return 66 }
         else if pinchCount < 100 { return 100 }
         else { return 100 }
+    }
+    
+    // MARK: - Core Motion Management
+    
+    private func startDeviceMotionUpdates() {
+        guard motionManager.isDeviceMotionAvailable else {
+            print("⚠️ Device motion not available")
+            return
+        }
+        
+        guard !motionManager.isDeviceMotionActive else {
+            print("ℹ️ Device motion already active")
+            return
+        }
+        
+        print("🟢 Starting Core Motion updates at \(samplingRate) Hz")
+        
+        motionManager.deviceMotionUpdateInterval = 1.0 / samplingRate
+        motionManager.showsDeviceMovementDisplay = false // Disabled on watchOS for stability
+        
+        // Align epoch with Core Motion timestamp (seconds since boot)
+        startEpoch = Date().timeIntervalSince1970 - ProcessInfo.processInfo.systemUptime
+        
+        motionManager.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: motionQueue) { [weak self] motion, error in
+            guard let self = self, let motion = motion else { 
+                if let error = error {
+                    print("Motion update error: \(error.localizedDescription)")
+                }
+                return 
+            }
+            self.collectRawSensorData(motion)
+        }
+    }
+    
+    private func stopDeviceMotionUpdates() {
+        if motionManager.isDeviceMotionActive {
+            motionManager.stopDeviceMotionUpdates()
+            print("🛑 Stopped Core Motion updates")
+        }
+    }
+    
+    private func restartMotionManager() {
+        // First try simple restart
+        stopDeviceMotionUpdates()
+        
+        // Reapply configuration and start
+        motionManager.deviceMotionUpdateInterval = 1.0 / samplingRate
+        
+        if motionManager.isDeviceMotionAvailable {
+            motionManager.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: motionQueue) { [weak self] motion, error in
+                guard let self = self, let motion = motion else { 
+                    if let error = error {
+                        print("Motion update error after restart: \(error.localizedDescription)")
+                    }
+                    return 
+                }
+                self.collectRawSensorData(motion)
+            }
+            
+            // Schedule a check to see if restart was successful
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                guard let self = self else { return }
+                
+                // Check if we're still not getting data after restart attempt
+                let timeSinceRestart = Date().timeIntervalSince(self.lastDataTimestamp)
+                if timeSinceRestart > 2.0 && self.sessionState != .inactive {
+                    print("⚠️ Motion restart failed - recreating CMMotionManager")
+                    self.recreateMotionManager()
+                }
+            }
+        }
+    }
+    
+    private func recreateMotionManager() {
+        print("🔄 Recreating CMMotionManager instance")
+        
+        // Stop the current manager
+        if motionManager.isDeviceMotionActive {
+            motionManager.stopDeviceMotionUpdates()
+        }
+        
+        // Create a new instance
+        motionManager = CMMotionManager()
+        
+        // Start with new instance
+        startDeviceMotionUpdates()
     }
     
     // MARK: - Background Session Management (HealthKit)
@@ -673,13 +793,44 @@ class DhikrDetectionEngine: NSObject, ObservableObject {
         
         do {
             workoutSession = try HKWorkoutSession(healthStore: healthStore, configuration: cfg)
+            workoutSession?.delegate = self
             workoutSession?.startActivity(with: Date())
-            print("✅ Started background workout session")
+            print("✅ Started background workout session - waiting for .running state to start Core Motion")
         } catch {
             print("⚠️ Failed to start workout session: \(error.localizedDescription)")
             print("   App may be suspended by watchOS during long sessions")
-            // Continue without background session
+            // Continue without background session - start motion immediately as fallback
+            startDeviceMotionUpdates()
         }
+    }
+    
+    // MARK: - HKWorkoutSessionDelegate
+    
+    func workoutSession(_ workoutSession: HKWorkoutSession, didChangeTo toState: HKWorkoutSessionState, from fromState: HKWorkoutSessionState, date: Date) {
+        print("🏃‍♂️ Workout session state changed: \(fromState.rawValue) -> \(toState.rawValue)")
+        
+        switch toState {
+        case .running:
+            print("✅ Workout session now running - starting Core Motion")
+            startDeviceMotionUpdates()
+        case .stopped, .ended:
+            print("🛑 Workout session stopped - stopping Core Motion")
+            stopDeviceMotionUpdates()
+        case .paused:
+            print("⏸️ Workout session paused")
+        default:
+            print("ℹ️ Workout session in state: \(toState.rawValue)")
+        }
+    }
+    
+    func workoutSession(_ workoutSession: HKWorkoutSession, didFailWithError error: Error) {
+        print("❌ Workout session failed: \(error.localizedDescription)")
+        // Fallback to starting motion updates without workout session
+        startDeviceMotionUpdates()
+    }
+    
+    func workoutSession(_ workoutSession: HKWorkoutSession, didGenerate event: HKWorkoutEvent) {
+        print("📝 Workout event: \(event)")
     }
     
     private func stopWorkoutSession() {
@@ -690,24 +841,7 @@ class DhikrDetectionEngine: NSObject, ObservableObject {
         }
     }
     
-    // MARK: - Extended Runtime Session Management
-    
-    private func startExtendedRuntimeSession() {
-        print("🔋 Starting extended runtime session to prevent watch sleep")
-        
-        extendedRuntimeSession = WKExtendedRuntimeSession()
-        extendedRuntimeSession?.delegate = self
-        
-        extendedRuntimeSession?.start(at: Date())
-    }
-    
-    private func stopExtendedRuntimeSession() {
-        if let session = extendedRuntimeSession {
-            session.invalidate()
-            extendedRuntimeSession = nil
-            print("🛑 Stopped extended runtime session")
-        }
-    }
+    // MARK: - Extended Runtime Session removed - using HKWorkoutSession only
     
     // MARK: - Session Monitoring
     
@@ -715,13 +849,18 @@ class DhikrDetectionEngine: NSObject, ObservableObject {
         print("🔍 Starting session monitoring")
         lastDataTimestamp = Date()
         
-        sessionTimeoutTimer = Timer.scheduledTimer(withTimeInterval: sessionTimeoutInterval, repeats: true) { [weak self] _ in
+        // Use DispatchSourceTimer for more reliable background execution
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        timer.schedule(deadline: .now() + sessionTimeoutInterval, repeating: sessionTimeoutInterval)
+        timer.setEventHandler { [weak self] in
             self?.checkSessionTimeout()
         }
+        timer.resume()
+        sessionTimeoutTimer = timer
     }
     
     private func stopSessionMonitoring() {
-        sessionTimeoutTimer?.invalidate()
+        sessionTimeoutTimer?.cancel()
         sessionTimeoutTimer = nil
         print("🛑 Stopped session monitoring")
     }
@@ -732,62 +871,48 @@ class DhikrDetectionEngine: NSObject, ObservableObject {
         if timeSinceLastData > sessionTimeoutInterval && sessionState != .inactive {
             print("⚠️ WARNING: No sensor data received for \(String(format: "%.1f", timeSinceLastData)) seconds!")
             print("   Session may have been suspended by watchOS")
-            print("   Expected data every 0.01s, last data: \(lastDataTimestamp)")
+            print("   Expected data every 0.02s (50Hz), last data: \(lastDataTimestamp)")
             
-            // Try to restart extended runtime session if it failed
-            if extendedRuntimeSession == nil {
-                print("🔄 Attempting to restart extended runtime session")
-                startExtendedRuntimeSession()
+            // Restart motion updates - this is often the solution when stream stops
+            print("🔄 Restarting motion updates...")
+            restartMotionManager()
+            
+            // Extended runtime session removed - relying solely on workout session for background execution
+        }
+    }
+    
+    // MARK: - Session Timer Management
+    
+    private func startSessionTimer() {
+        stopSessionTimer() // Stop any existing timer
+        
+        sessionTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.updateSessionDuration()
             }
         }
+        
+        print("⏱️ Session timer started")
+    }
+    
+    private func stopSessionTimer() {
+        sessionTimer?.invalidate()
+        sessionTimer = nil
+        
+        // Save final duration before resetting
+        lastSessionDuration = sessionDuration
+        sessionDuration = 0.0
+        
+        print("⏱️ Session timer stopped - Final duration: \(String(format: "%.1f", lastSessionDuration))s")
+    }
+    
+    private func updateSessionDuration() {
+        guard let sessionStartTime = sessionStartTime else { return }
+        sessionDuration = Date().timeIntervalSince(sessionStartTime)
     }
 }
 
-// MARK: - WKExtendedRuntimeSessionDelegate
-
-extension DhikrDetectionEngine: WKExtendedRuntimeSessionDelegate {
-    func extendedRuntimeSessionDidStart(_ extendedRuntimeSession: WKExtendedRuntimeSession) {
-        print("✅ Extended runtime session successfully started")
-    }
-    
-    func extendedRuntimeSessionWillExpire(_ extendedRuntimeSession: WKExtendedRuntimeSession) {
-        print("⚠️ Extended runtime session will expire soon - watch may sleep")
-        
-        // Try to restart the session if we're still collecting data
-        if sessionState != .inactive {
-            print("🔄 Attempting to restart extended runtime session")
-            stopExtendedRuntimeSession()
-            startExtendedRuntimeSession()
-        }
-    }
-    
-    func extendedRuntimeSession(_ extendedRuntimeSession: WKExtendedRuntimeSession, didInvalidateWith reason: WKExtendedRuntimeSessionInvalidationReason, error: Error?) {
-        print("🛑 Extended runtime session invalidated: \(reason)")
-        
-        if let error = error {
-            print("   Error: \(error.localizedDescription)")
-        }
-        
-        // Clear the reference since it's now invalid
-        self.extendedRuntimeSession = nil
-        
-        // If we're still in an active session, warn the user
-        if sessionState != .inactive {
-            print("⚠️ Watch may go to sleep during sensor collection!")
-            
-            // Log the reason for debugging
-            print("   Invalidation reason: \(reason)")
-            
-            // TODO: Add restart logic once we know the correct enum values
-            // if reason == .someReasonValue {
-            //     print("🔄 Attempting to restart extended runtime session")
-            //     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            //         self.startExtendedRuntimeSession()
-            //     }
-            // }
-        }
-    }
-}
+// MARK: - WKExtendedRuntimeSession removed - using HKWorkoutSession only
 
 // MARK: - Helper Extensions
 

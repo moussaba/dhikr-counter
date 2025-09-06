@@ -1,0 +1,41 @@
+# Advanced TKEO Pinch Detection Configuration - Additive Fusion (Default)
+# Additive fusion sums weighted sensor signals for traditional approach
+# Good baseline configuration with improved robustness features
+
+tkeo_params:
+  # Sampling and filtering
+  fs: 100  # Sampling frequency (Hz) - validated against actual data
+  bandpass_low: 3.0  # Low cutoff frequency (Hz) - targets pinch range  
+  bandpass_high: 20.0  # High cutoff frequency (Hz) - captures transient energy
+  
+  # Baseline tracking with robust updating
+  baseline_alpha: 0.02  # EWMA coefficient (higher = faster adaptation)
+  hampel_k: 3.0  # Robust update threshold - prevents drift during bursts
+  
+  # Gate thresholds (liberal for high recall) 
+  gate_k_accel: 3.0  # Accelerometer gate threshold (sigma multiplier)
+  gate_k_gyro: 3.0   # Gyroscope gate threshold (sigma multiplier)
+  gate_k_fusion: 3.0 # Fusion gate threshold (sigma multiplier)
+  
+  # Sensor fusion (ADDITIVE METHOD - Default)
+  fusion_method: 'additive'  # 'additive' or 'multiplicative'
+  fusion_weight_accel: 1.0  # Accelerometer weight
+  fusion_weight_gyro: 1.5   # Gyroscope weight (higher for micro-gestures)
+  
+  # Template verification with lag search
+  template_length: 16  # Template window length (samples) ~160ms at 100Hz
+  template_confidence: 0.65  # NCC threshold for verification
+  # Note: Lag search (±3 samples) now automatic for timing jitter tolerance
+  
+  # Event constraints
+  refractory_period_s: 0.300  # Minimum time between detections (seconds)
+  verification_window_s: 0.16  # Template verification window (seconds)
+
+# Recent Improvements:
+# - Robust baseline tracking prevents threshold drift during events
+# - Vectorized TKEO computation with non-negative clamping
+# - Central difference derivatives for cleaner jerk calculation
+# - Template consistency via full-session preprocessing
+# - NCC lag search for timing jitter tolerance (±30ms at 100Hz)
+# - Sampling rate validation with automatic dt adjustment
+# - analyze_session.py integration for more accurate templates (vs streaming)

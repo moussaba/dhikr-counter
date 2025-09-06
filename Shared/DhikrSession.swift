@@ -10,6 +10,7 @@ struct DhikrSession: Codable, Identifiable {
     let sessionDuration: TimeInterval
     let deviceInfo: DeviceInfo
     let sessionNotes: String?
+    let actualPinchCount: Int?
     
     var isActive: Bool {
         return endTime == nil
@@ -37,9 +38,10 @@ struct DhikrSession: Codable, Identifiable {
         self.sessionDuration = 0
         self.deviceInfo = deviceInfo
         self.sessionNotes = nil
+        self.actualPinchCount = nil
     }
     
-    func completed(at endTime: Date, totalPinches: Int, detectedPinches: Int, manualCorrections: Int, notes: String? = nil) -> DhikrSession {
+    func completed(at endTime: Date, totalPinches: Int, detectedPinches: Int, manualCorrections: Int, notes: String? = nil, actualPinchCount: Int? = nil) -> DhikrSession {
         return DhikrSession(
             id: self.id,
             startTime: self.startTime,
@@ -49,11 +51,12 @@ struct DhikrSession: Codable, Identifiable {
             manualCorrections: manualCorrections,
             sessionDuration: endTime.timeIntervalSince(self.startTime),
             deviceInfo: self.deviceInfo,
-            sessionNotes: notes
+            sessionNotes: notes,
+            actualPinchCount: actualPinchCount ?? self.actualPinchCount
         )
     }
     
-    private init(id: UUID, startTime: Date, endTime: Date?, totalPinches: Int, detectedPinches: Int, manualCorrections: Int, sessionDuration: TimeInterval, deviceInfo: DeviceInfo, sessionNotes: String?) {
+    private init(id: UUID, startTime: Date, endTime: Date?, totalPinches: Int, detectedPinches: Int, manualCorrections: Int, sessionDuration: TimeInterval, deviceInfo: DeviceInfo, sessionNotes: String?, actualPinchCount: Int? = nil) {
         self.id = id
         self.startTime = startTime
         self.endTime = endTime
@@ -63,6 +66,7 @@ struct DhikrSession: Codable, Identifiable {
         self.sessionDuration = sessionDuration
         self.deviceInfo = deviceInfo
         self.sessionNotes = sessionNotes
+        self.actualPinchCount = actualPinchCount
     }
 }
 
@@ -75,7 +79,8 @@ extension DhikrSession {
         detectedPinches: Int,
         manualCorrections: Int,
         sessionDuration: TimeInterval,
-        notes: String?
+        notes: String?,
+        actualPinchCount: Int? = nil
     ) -> DhikrSession {
         return DhikrSession(
             id: id,
@@ -86,7 +91,8 @@ extension DhikrSession {
             manualCorrections: manualCorrections,
             sessionDuration: sessionDuration,
             deviceInfo: .current,
-            sessionNotes: notes
+            sessionNotes: notes,
+            actualPinchCount: actualPinchCount
         )
     }
     
@@ -99,7 +105,8 @@ extension DhikrSession {
         manualCorrections: 4,
         sessionDuration: 1500, // 25 minutes
         deviceInfo: .current,
-        sessionNotes: "Evening dhikr session - Astaghfirullah"
+        sessionNotes: "Evening dhikr session - Astaghfirullah",
+        actualPinchCount: 95
     )
 }
 
@@ -114,7 +121,7 @@ struct DeviceInfo: Codable {
             deviceModel: "Apple Watch", // Will be populated with actual device info
             systemVersion: "watchOS", // Will be populated with actual version
             appVersion: "1.0", // From bundle info
-            samplingRate: 100.0
+            samplingRate: 50.0  // Updated to match actual sampling rate
         )
     }
 }

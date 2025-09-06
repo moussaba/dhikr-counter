@@ -405,7 +405,7 @@ struct SensorDataSessionCard: View {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 8) {
                     StatCard(title: "Sensor Readings", value: "\(sensorData.count)", color: .blue)
                     StatCard(title: "Duration", value: String(format: "%.1fs", session.sessionDuration), color: .green)
-                    StatCard(title: "Sample Rate", value: "100 Hz", color: .orange)
+                    StatCard(title: "Sample Rate", value: "50 Hz", color: .orange)
                     StatCard(title: "File Size", value: "\(Int(Double(sensorData.count) * 0.25))KB", color: .purple)
                 }
             } else {
@@ -433,6 +433,9 @@ struct SessionDetailView: View {
             VStack(spacing: 20) {
                 // Session overview
                 SessionOverviewCard(session: session)
+                
+                // Validation data
+                ValidationDataCard(session: session)
                 
                 // Sensor data preview
                 if let sensorData = dataManager.getSensorData(for: session.id.uuidString) {
@@ -499,6 +502,92 @@ struct OverviewItem: View {
         .padding()
         .background(Color(.systemGray6))
         .cornerRadius(8)
+    }
+}
+
+struct ValidationDataCard: View {
+    let session: DhikrSession
+    @ObservedObject private var dataManager = PhoneSessionManager.shared
+    @State private var actualPinchCountText: String = ""
+    @State private var showingNumberPad = false
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Validation Data")
+                .font(.headline)
+                .fontWeight(.semibold)
+            
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Set the actual number of pinches performed during this session for algorithm validation:")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Actual Pinch Count")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                        
+                        if let actualCount = session.actualPinchCount {
+                            Text("\(actualCount)")
+                                .font(.title3)
+                                .fontWeight(.bold)
+                                .foregroundColor(.green)
+                        } else {
+                            Text("Not Set")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    
+                    Spacer()
+                    
+                    Button("Edit") {
+                        actualPinchCountText = session.actualPinchCount?.description ?? ""
+                        showingNumberPad = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                }
+                .padding()
+                .background(Color(.systemGray6))
+                .cornerRadius(8)
+            }
+        }
+        .padding()
+        .background(Color(.systemBackground))
+        .cornerRadius(16)
+        .alert("Enter Actual Pinch Count", isPresented: $showingNumberPad) {
+            TextField("Number of pinches", text: $actualPinchCountText)
+                .keyboardType(.numberPad)
+            
+            Button("Save") {
+                saveActualPinchCount()
+            }
+            
+            Button("Clear") {
+                clearActualPinchCount()
+            }
+            .foregroundColor(.red)
+            
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Enter the actual number of pinches you performed during this session for validation purposes.")
+        }
+    }
+    
+    private func saveActualPinchCount() {
+        if actualPinchCountText.isEmpty {
+            clearActualPinchCount()
+        } else if let count = Int(actualPinchCountText), count >= 0 {
+            dataManager.updateActualPinchCount(for: session.id.uuidString, actualPinchCount: count)
+        }
+        actualPinchCountText = ""
+    }
+    
+    private func clearActualPinchCount() {
+        dataManager.updateActualPinchCount(for: session.id.uuidString, actualPinchCount: nil)
+        actualPinchCountText = ""
     }
 }
 
@@ -796,7 +885,7 @@ struct SensorDataPreviewCard: View {
                     Text("Sample Rate")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    Text("100 Hz")
+                    Text("50 Hz")
                         .font(.subheadline)
                         .fontWeight(.medium)
                 }
@@ -1113,12 +1202,17 @@ struct SessionExportView: View {
         
         if includeMetadata {
             csv += "# app=DhikrCounter version=1.0\n"
-            csv += "# using_frame=xArbitraryCorrectedZVertical\n" 
-            csv += "# update_interval_s=0.010000\n"
+            csv += "# using_frame=xArbitraryZVertical\n"  // Updated to match actual reference frame 
+            csv += "# update_interval_s=0.020000\n"  // 50Hz = 0.02s interval
             csv += "# Session ID: \(session.id.uuidString)\n"
             csv += "# Start Time: \(session.startTime)\n"
             csv += "# Duration: \(session.sessionDuration)s\n"
             csv += "# Total Readings: \(sensorData.count)\n"
+            if let actualCount = session.actualPinchCount {
+                csv += "# Actual Pinch Count: \(actualCount)\n"
+            } else {
+                csv += "# Actual Pinch Count: Not Set\n"
+            }
             csv += "#\n"
         }
         
@@ -1155,16 +1249,20 @@ struct SessionExportView: View {
         var json: [String: Any] = [:]
         
         if includeMetadata {
-            json["metadata"] = [
+            var metadata: [String: Any] = [
                 "app": "DhikrCounter",
                 "version": "1.0", 
-                "using_frame": "xArbitraryCorrectedZVertical",
-                "update_interval_s": 0.010000,
+                "using_frame": "xArbitraryZVertical",  // Updated to match actual reference frame
+                "update_interval_s": 0.020000,  // 50Hz = 0.02s interval
                 "sessionId": session.id.uuidString,
                 "startTime": session.startTime.timeIntervalSinceReferenceDate,
                 "duration": session.sessionDuration,
                 "totalReadings": sensorData.count
             ]
+            if let actualCount = session.actualPinchCount {
+                metadata["actualPinchCount"] = actualCount
+            }
+            json["metadata"] = metadata
         }
         
         let readings = sensorData.map { reading in
@@ -1331,7 +1429,7 @@ struct FullScreenChartView: View {
                         Text("Rate")
                             .font(.caption)
                             .foregroundColor(.secondary)
-                        Text("100 Hz")
+                        Text("50 Hz")
                             .font(.title2)
                             .fontWeight(.semibold)
                     }
