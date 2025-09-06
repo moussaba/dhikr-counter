@@ -53,6 +53,21 @@ struct SessionInfoView: View {
     
     var body: some View {
         VStack(spacing: 4) {
+            // Timer display (always visible, shows current session or last session duration)
+            HStack(spacing: 4) {
+                Text(detectionEngine.timerText)
+                    .font(.system(size: 16, weight: .semibold, design: .monospaced))
+                    .foregroundColor(detectionEngine.sessionState != .inactive ? .blue : .secondary)
+                    .contentTransition(.numericText())
+                
+                // Show indicator for last session vs current session
+                if detectionEngine.sessionState == .inactive && detectionEngine.lastSessionDuration > 0 {
+                    Text("last")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
+            
             // Progress bar for milestones
             ProgressView(value: detectionEngine.progressValue)
                 .progressViewStyle(LinearProgressViewStyle(tint: .green))

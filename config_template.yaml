@@ -1,0 +1,140 @@
+# Stationary Pinch Detection Configuration
+# Based on advanced_pinch_detector.ipynb implementation
+
+# Algorithm parameters for stationary detection
+stationary_params:
+  # Core detection thresholds
+  k_mad: 3.8          # MAD multiplier for adaptive threshold
+  acc_gate: 0.015      # Acceleration gate threshold (g)
+  gyro_gate: 0.10      # Gyroscope gate threshold (rad/s)
+  
+  # Signal processing windows
+  hp_win: 0.5          # High-pass filter window (seconds)
+  thr_win: 2.0         # Threshold computation window (seconds)
+  
+  # Event detection parameters
+  refractory_s: 0.120   # Refractory period between events (seconds)
+  peakwin_s: 0.04      # Peak detection window (seconds)
+  gatewin_s: 0.18      # Gate validation window (seconds)
+  min_iei_s: 0.10      # Minimum inter-event interval (seconds)
+
+# Streaming physiological detection parameters 
+streaming_params:
+  # Physiological timing constraints
+  min_interval_s: 0.300         # Minimum 300ms between events (physiological limit)
+  decision_latency_s: 0.200     # Decision buffer latency (200ms)
+  
+  # Detection thresholds - balanced for real-world use
+  k_mad_liberal: 3.2            # Liberal threshold for event candidates  
+  k_mad_confirm: 4.2            # Confirmation threshold for final events
+  
+  # Baseline tracking parameters
+  baseline_alpha: 0.001         # EMA decay rate (1/1000 samples ≈ 10s at 100Hz)
+  hampel_k: 3.0                 # Outlier detection threshold for baseline
+  
+  # Signal processing
+  hp_win: 0.5                   # High-pass filter window (seconds)
+  thr_win: 2.0                  # Threshold computation window (seconds)
+
+# Walking detection parameters (for future extension)
+walking_params:
+  # Core detection - relaxed thresholds
+  k_mad: 3.0           # MAD multiplier for adaptive threshold
+  acc_gate: 0.025      # Acceleration gate threshold (g)
+  gyro_gate: 0.10      # Gyroscope gate threshold (rad/s)
+  
+  # Signal processing
+  hp_win: 0.5          # High-pass filter window (seconds)
+  bp_lo: 4.0           # Bandpass low frequency (Hz)
+  bp_hi: 30.0          # Bandpass high frequency (Hz)
+  env_win: 0.06        # Envelope window (seconds)
+  thr_win: 1.5         # Threshold computation window (seconds)
+  
+  # Walking-specific validations
+  align_tol_s: 0.50    # Peak alignment tolerance (seconds)
+  rise_max_s: 0.40     # Maximum rise time (seconds)
+  decay_dt_s: 0.14     # Decay check time (seconds)
+  decay_frac_max: 0.90 # Maximum decay fraction
+  energy_ratio_min: 0.001  # Minimum energy ratio
+  low_lo: 0.7          # Low-band filter low frequency (Hz)
+  low_hi: 3.0          # Low-band filter high frequency (Hz)
+  corr_lag_s: 0.10     # Correlation lag window (seconds)
+  corr_min: 0.15       # Minimum correlation threshold
+  
+  # Event detection
+  refractory_s: 0.12   # Refractory period (seconds)
+  peakwin_s: 0.15      # Peak detection window (seconds)
+  gatewin_s: 0.20      # Gate validation window (seconds)
+  min_iei_s: 0.10      # Minimum inter-event interval (seconds)
+
+# Output configuration
+output:
+  # Directory naming template (supports {session_id}, {timestamp}, {detector_type})
+  directory_template: "analysis_{session_id}_{timestamp}"
+  
+  # Report generation options
+  include_debug: false          # Include debug information in reports
+  chart_style: "research"       # Chart styling: "research", "clinical", "minimal"
+  
+  # Visualization options
+  plot_components: true         # Include component analysis plots
+  plot_fusion_score: true       # Include fusion score timeline
+  plot_events: true            # Mark detected events on plots
+  
+  # Export formats
+  export_csv: false             # Export detected events to CSV
+  export_html: true            # Generate HTML report
+  export_plots: false           # Save individual plot files
+  
+  # Chart.js configuration
+  chart_height: 400            # Chart height in pixels
+  chart_responsive: true       # Responsive charts
+  chart_animation: true        # Enable chart animations
+
+# Input data configuration
+input:
+  # Automatic format detection based on file extension
+  auto_detect_format: true
+  
+  # Expected sampling rate (Hz) - used for validation
+  expected_fs: 100.0
+  
+  # Column mapping for CSV files (from watch export format)
+  csv_columns:
+    time: "time_s"                    # Time column name
+    epoch: "epoch_s"                  # Epoch time column (optional)
+    acceleration_x: "userAccelerationX"
+    acceleration_y: "userAccelerationY" 
+    acceleration_z: "userAccelerationZ"
+    rotation_x: "rotationRateX"
+    rotation_y: "rotationRateY"
+    rotation_z: "rotationRateZ"
+    gravity_x: "gravityX"
+    gravity_y: "gravityY"
+    gravity_z: "gravityZ"
+  
+  # JSON path mapping for session JSON files
+  json_paths:
+    metadata: "metadata"
+    sensor_data: "sensorData"
+    time: "time_s"
+    epoch: "epoch_s"
+    acceleration: "userAcceleration"   # Contains x, y, z
+    rotation: "rotationRate"          # Contains x, y, z
+    gravity: "gravity"                # Contains x, y, z
+
+# Analysis configuration
+analysis:
+  detector_type: "stationary"   # "stationary" or "walking"
+  
+  # Data preprocessing
+  remove_gravity: false         # Whether to remove gravity from acceleration
+  filter_outliers: true        # Apply outlier filtering
+  
+  # Validation thresholds
+  min_duration_s: 1.0          # Minimum session duration
+  max_gap_s: 0.1               # Maximum allowable time gap
+  
+  # Performance options
+  parallel_processing: false   # Enable parallel processing (future)
+  chunk_size: 10000           # Processing chunk size for large files

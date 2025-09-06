@@ -97,6 +97,38 @@ class PhoneSessionManager: NSObject, ObservableObject {
         return storedMetadata[sessionId]?.sensorDataCount ?? 0
     }
     
+    func updateActualPinchCount(for sessionId: String, actualPinchCount: Int?) {
+        addDebugMessage("📝 Updating actual pinch count for session \(sessionId.prefix(8)): \(actualPinchCount?.description ?? "nil")")
+        
+        // First, find and update the session in the receivedSessions array
+        if let index = receivedSessions.firstIndex(where: { $0.id.uuidString == sessionId }) {
+            let currentSession = receivedSessions[index]
+            let updatedSession = DhikrSession.createWithId(
+                id: currentSession.id,
+                startTime: currentSession.startTime,
+                endTime: currentSession.endTime ?? currentSession.startTime,
+                totalPinches: currentSession.totalPinches,
+                detectedPinches: currentSession.detectedPinches,
+                manualCorrections: currentSession.manualCorrections,
+                sessionDuration: currentSession.sessionDuration,
+                notes: currentSession.sessionNotes,
+                actualPinchCount: actualPinchCount
+            )
+            receivedSessions[index] = updatedSession
+            
+            // Load sensor data and detection events if available
+            let sensorData = getSensorData(for: sessionId) ?? []
+            let detectionEvents = getDetectionEvents(for: sessionId) ?? []
+            
+            // Save the updated session to disk
+            saveSession(updatedSession, sensorData: sensorData, detectionEvents: detectionEvents)
+            
+            addDebugMessage("✅ Successfully updated actual pinch count for session \(sessionId.prefix(8))")
+        } else {
+            addDebugMessage("⚠️ Session not found: \(sessionId.prefix(8))")
+        }
+    }
+    
     func getDetectionEventCount(for sessionId: String) -> Int {
         return storedMetadata[sessionId]?.detectionEventCount ?? 0
     }
@@ -167,7 +199,7 @@ class PhoneSessionManager: NSObject, ObservableObject {
                 This app directory contains session files with research-grade sensor data.
                 
                 Each session file includes:
-                • High-resolution sensor data (100Hz accelerometer and gyroscope)  
+                • High-resolution sensor data (50Hz accelerometer and gyroscope)  
                 • Detection events and timestamps
                 • Research-grade CSV/JSON format for analysis
                 
@@ -386,6 +418,7 @@ class PhoneSessionManager: NSObject, ObservableObject {
             detectedPinches: session.detectedPinches,
             manualCorrections: session.manualCorrections,
             notes: nil,
+            actualPinchCount: session.actualPinchCount,
             sensorData: sensorData,
             detectionEvents: detectionEvents
         )
@@ -852,6 +885,7 @@ private struct PersistedSessionData: Codable {
     let detectedPinches: Int
     let manualCorrections: Int
     let notes: String?
+    let actualPinchCount: Int?
     let sensorData: [SensorReading]
     let detectionEvents: [DetectionEvent]
     
@@ -864,7 +898,8 @@ private struct PersistedSessionData: Codable {
             detectedPinches: detectedPinches,
             manualCorrections: manualCorrections,
             sessionDuration: sessionDuration,
-            notes: notes
+            notes: notes,
+            actualPinchCount: actualPinchCount
         )
     }
 }

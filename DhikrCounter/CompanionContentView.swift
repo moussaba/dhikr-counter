@@ -277,7 +277,7 @@ struct SettingsView: View {
                 Section("Detection Algorithm") {
                     SettingRow(title: "Accelerometer Threshold", value: "0.05g")
                     SettingRow(title: "Gyroscope Threshold", value: "0.18 rad/s")
-                    SettingRow(title: "Sampling Rate", value: "100 Hz")
+                    SettingRow(title: "Sampling Rate", value: "50 Hz")
                     SettingRow(title: "Refractory Period", value: "250ms")
                 }
                 

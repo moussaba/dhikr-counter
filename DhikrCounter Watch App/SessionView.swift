@@ -67,7 +67,7 @@ struct AlgorithmStatusView: View {
                 .foregroundColor(.primary)
             
             VStack(spacing: 8) {
-                StatRow(label: "Sampling Rate", value: "100 Hz")
+                StatRow(label: "Sampling Rate", value: "50 Hz")
                 StatRow(label: "Accel Threshold", value: "0.05g")
                 StatRow(label: "Gyro Threshold", value: "0.18 rad/s")
                 StatRow(label: "Refractory Period", value: "250ms")
