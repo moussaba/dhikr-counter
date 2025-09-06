@@ -127,7 +127,8 @@ class DebugDetector:
         refractory_s = self.params.get('refractory_s', 0.12)
         min_iei_s = self.params.get('min_iei_s', 0.10)
         
-        rejected_gates = 0
+        rejected_acc_gates = 0
+        rejected_gyro_gates = 0
         rejected_refractory = 0
         rejected_not_peak = 0
         rejected_min_iei = 0
@@ -145,8 +146,17 @@ class DebugDetector:
             a_peak = a[peak]
             g_peak = g[peak]
             
-            if a_peak < acc_gate or g_peak < gyro_gate:
-                rejected_gates += 1
+            # Separate gating checks
+            acc_gate_pass = a_peak >= acc_gate
+            gyro_gate_pass = g_peak >= gyro_gate
+            
+            if not acc_gate_pass:
+                rejected_acc_gates += 1
+            if not gyro_gate_pass:
+                rejected_gyro_gates += 1
+                
+            # Reject if either gate fails
+            if not (acc_gate_pass and gyro_gate_pass):
                 continue
                 
             # Simple refractory check
@@ -167,16 +177,19 @@ class DebugDetector:
                 'gyro_peak': g_peak
             })
         
-        print(f"  Rejected by gates: {rejected_gates}")
+        print(f"  Rejected by accelerometer gate: {rejected_acc_gates}")
+        print(f"  Rejected by gyroscope gate: {rejected_gyro_gates}")
         print(f"  Rejected by refractory period: {rejected_refractory}")
         print(f"  Rejected by min inter-event interval: {rejected_min_iei}")
         print(f"  Final detected events: {len(final_events)}")
         
         # Summary statistics
-        total_rejected = rejected_gates + rejected_refractory + rejected_min_iei
+        total_gate_rejected = rejected_acc_gates + rejected_gyro_gates
+        total_rejected = total_gate_rejected + rejected_refractory + rejected_min_iei
         if len(peaks) > 0:
             print(f"\n📊 Rejection Statistics:")
-            print(f"  Gates: {rejected_gates}/{len(peaks)} ({100*rejected_gates/len(peaks):.1f}%)")
+            print(f"  Accelerometer gate: {rejected_acc_gates}/{len(peaks)} ({100*rejected_acc_gates/len(peaks):.1f}%)")
+            print(f"  Gyroscope gate: {rejected_gyro_gates}/{len(peaks)} ({100*rejected_gyro_gates/len(peaks):.1f}%)")
             print(f"  Refractory: {rejected_refractory}/{len(peaks)} ({100*rejected_refractory/len(peaks):.1f}%)")
             print(f"  Min IEI: {rejected_min_iei}/{len(peaks)} ({100*rejected_min_iei/len(peaks):.1f}%)")
             print(f"  Success rate: {len(final_events)}/{len(peaks)} ({100*len(final_events)/len(peaks):.1f}%)")
@@ -186,7 +199,8 @@ class DebugDetector:
             'peaks': len(peaks),
             'final_events': len(final_events),
             'rejection_stats': {
-                'rejected_gates': rejected_gates,
+                'rejected_acc_gates': rejected_acc_gates,
+                'rejected_gyro_gates': rejected_gyro_gates,
                 'rejected_refractory': rejected_refractory,
                 'rejected_min_iei': rejected_min_iei,
                 'total_rejected': total_rejected
@@ -699,8 +713,11 @@ class StationaryDetector:
             # Gate checks
             g0 = max(0, i - gate)
             g1 = min(n, i + gate + 1)
-            if (np.nanmax(a_hp[g0:g1]) < acc_gate or 
-                np.nanmax(g[g0:g1]) < gyro_gate):
+            # Separate gate checks for debugging
+            acc_gate_max = np.nanmax(a_hp[g0:g1])
+            gyro_gate_max = np.nanmax(g[g0:g1])
+            
+            if acc_gate_max < acc_gate or gyro_gate_max < gyro_gate:
                 continue
                 
             # Minimum inter-event interval
@@ -744,7 +761,8 @@ class StationaryDetector:
         rejected_candidates = {
             'refractory': [],
             'not_peak': [],
-            'gates': [],
+            'acc_gates': [],
+            'gyro_gates': [],
             'min_iei': []
         }
         
@@ -775,9 +793,20 @@ class StationaryDetector:
             # Gate checks
             g0 = max(0, idx - gate)
             g1 = min(n, idx + gate + 1)
-            if (np.nanmax(a_hp[g0:g1]) < acc_gate or 
-                np.nanmax(g[g0:g1]) < gyro_gate):
-                rejected_candidates['gates'].append(candidate)
+            # Separate gate checks for debugging
+            acc_gate_max = np.nanmax(a_hp[g0:g1])
+            gyro_gate_max = np.nanmax(g[g0:g1])
+            
+            acc_gate_pass = acc_gate_max >= acc_gate
+            gyro_gate_pass = gyro_gate_max >= gyro_gate
+            
+            if not acc_gate_pass:
+                rejected_candidates['acc_gates'].append(candidate)
+            if not gyro_gate_pass:
+                rejected_candidates['gyro_gates'].append(candidate)
+                
+            # Reject if either gate fails
+            if not (acc_gate_pass and gyro_gate_pass):
                 continue
                 
             # Minimum inter-event interval
@@ -790,6 +819,244 @@ class StationaryDetector:
             last = idx
         
         return events, rejected_candidates
+
+
+class StreamingBaselineTracker:
+    """Online baseline and MAD estimation for streaming detection."""
+    
+    def __init__(self, alpha: float = 1/1000, hampel_k: float = 3.0):
+        self.alpha = alpha  # EMA decay rate
+        self.hampel_k = hampel_k  # Outlier detection threshold
+        self.mean = 0.0
+        self.mad = 1.0  # Start with reasonable default
+        self.initialized = False
+        
+    def update(self, value: float):
+        """Update baseline statistics, skipping outliers."""
+        if not self.initialized:
+            self.mean = value
+            self.mad = abs(value - self.mean) + 1e-6
+            self.initialized = True
+            return
+            
+        # Hampel outlier detection - don't update stats during events
+        if abs(value - self.mean) <= self.hampel_k * self.mad:
+            # Normal sample - update statistics
+            self.mean = (1 - self.alpha) * self.mean + self.alpha * value
+            self.mad = (1 - self.alpha) * self.mad + self.alpha * abs(value - self.mean)
+            
+    def get_threshold(self, k_mad: float = 3.0) -> float:
+        """Get adaptive threshold."""
+        return self.mean + k_mad * 1.4826 * self.mad
+
+
+class StreamingSignalProcessor:
+    """Real-time signal processing for streaming detection."""
+    
+    def __init__(self, fs: float = 100.0):
+        self.fs = fs
+        # Simple high-pass filter state (1st order IIR)
+        self.hp_alpha = 0.99  # For ~0.5Hz high-pass at 100Hz
+        self.acc_hp_state = np.array([0.0, 0.0, 0.0])
+        self.gyro_hp_state = np.array([0.0, 0.0, 0.0])
+        self.acc_hp_prev = np.array([0.0, 0.0, 0.0])
+        self.gyro_hp_prev = np.array([0.0, 0.0, 0.0])
+        
+    def compute_fusion_score(self, acc_xyz: np.ndarray, gyro_xyz: np.ndarray) -> float:
+        """Compute fusion score for single sample."""
+        # High-pass filter for acceleration (remove gravity/drift)
+        acc_hp = self.hp_alpha * (self.acc_hp_state + acc_xyz - self.acc_hp_prev)
+        self.acc_hp_state = acc_hp
+        self.acc_hp_prev = acc_xyz
+        
+        # Light high-pass for gyroscope  
+        gyro_hp = self.hp_alpha * (self.gyro_hp_state + gyro_xyz - self.gyro_hp_prev)
+        self.gyro_hp_state = gyro_hp
+        self.gyro_hp_prev = gyro_xyz
+        
+        # Compute magnitudes
+        acc_mag = np.linalg.norm(acc_hp)
+        gyro_mag = np.linalg.norm(gyro_hp)
+        
+        # Fusion (weighted combination)
+        return 0.6 * acc_mag + 0.4 * gyro_mag
+
+
+class StreamingPhysiologicalDetector:
+    """
+    Real-time streaming detector using physiological constraints.
+    
+    Implements the algorithm recommended by GPT-5 and Gemini Pro:
+    - Liberal candidate generation with lower threshold
+    - Decision buffer to wait for stronger peaks  
+    - Hard 300ms physiological constraint
+    - O(1) per sample processing
+    """
+    
+    def __init__(self, config: Dict[str, Any]):
+        self.params = config.get('streaming_params', {})
+        
+        # Core parameters
+        self.min_interval = self.params.get('min_interval_s', 0.300)  # 300ms physiological limit
+        self.decision_latency = self.params.get('decision_latency_s', 0.200)  # 200ms decision window
+        self.liberal_threshold = self.params.get('k_mad_liberal', 3.0)  # Lower threshold for candidates
+        self.confirm_threshold = self.params.get('k_mad_confirm', 3.8)  # Higher threshold for confirmation
+        
+        # State variables
+        self.last_confirmed_time = -10.0  # Last accepted event time
+        self.candidate_peak = None  # Current candidate: {time, amplitude, score, acc_peak, gyro_peak}
+        
+        # Signal processing components
+        self.baseline_tracker = StreamingBaselineTracker()
+        self.signal_processor = StreamingSignalProcessor()
+        
+        # Peak detection state
+        self.prev_score = 0.0
+        self.in_peak = False
+        self.peak_start_time = 0.0
+        
+    def detect_streaming(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Simulate streaming detection on batch data for testing/comparison.
+        In real watch implementation, this would be called sample-by-sample.
+        """
+        print(f"Running streaming physiological detection...")
+        
+        t = data['time']
+        acc_xyz = data['acc_xyz']
+        gyro_xyz = data['gyro_xyz']
+        fs = data['fs']
+        
+        # Initialize signal processor with correct sample rate
+        self.signal_processor = StreamingSignalProcessor(fs)
+        
+        events = []
+        scores = []
+        thresholds = []
+        
+        # Process each sample sequentially
+        for i in range(len(t)):
+            timestamp = t[i]
+            acc_sample = acc_xyz[i]
+            gyro_sample = gyro_xyz[i] 
+            
+            # Process single sample
+            event = self.process_sample(timestamp, acc_sample, gyro_sample)
+            
+            # Record score and threshold for analysis
+            current_score = self.signal_processor.compute_fusion_score(acc_sample, gyro_sample)
+            current_threshold = self.baseline_tracker.get_threshold(self.liberal_threshold)
+            scores.append(current_score)
+            thresholds.append(current_threshold)
+            
+            if event:
+                events.append(event)
+        
+        # Check for final candidate confirmation
+        if self.candidate_peak and len(t) > 0:
+            final_time = t[-1]
+            if final_time >= self.candidate_peak['time'] + self.decision_latency:
+                final_event = self._confirm_candidate()
+                if final_event:
+                    events.append(final_event)
+        
+        print(f"✓ Detected {len(events)} events (streaming)")
+        
+        return {
+            'detector_type': 'streaming_physiological',
+            'events': events,
+            'score': np.array(scores),
+            'threshold': np.array(thresholds),
+            'params': self.params,
+            'data': data
+        }
+    
+    def process_sample(self, timestamp: float, acc_xyz: np.ndarray, gyro_xyz: np.ndarray) -> Optional[Dict[str, Any]]:
+        """
+        Process a single sensor sample. 
+        This is the core real-time function for watch implementation.
+        """
+        # 1. Compute fusion score
+        score = self.signal_processor.compute_fusion_score(acc_xyz, gyro_xyz)
+        
+        # 2. Update baseline tracker  
+        self.baseline_tracker.update(score)
+        
+        # 3. Check if candidate needs confirmation
+        if (self.candidate_peak and 
+            timestamp >= self.candidate_peak['time'] + self.decision_latency):
+            confirmed_event = self._confirm_candidate()
+            if confirmed_event:
+                return confirmed_event
+        
+        # 4. Enforce physiological refractory period
+        if timestamp < self.last_confirmed_time + self.min_interval:
+            return None  # In dead zone
+        
+        # 5. Peak detection and candidate management
+        self._update_peak_detection(timestamp, score, acc_xyz, gyro_xyz)
+        
+        return None  # No immediate detection
+    
+    def _update_peak_detection(self, timestamp: float, score: float, acc_xyz: np.ndarray, gyro_xyz: np.ndarray):
+        """Update peak detection state and manage candidates."""
+        threshold = self.baseline_tracker.get_threshold(self.liberal_threshold)
+        
+        # Simple peak detection using score progression
+        is_rising = score > self.prev_score
+        above_threshold = score > threshold
+        
+        if above_threshold and is_rising and not self.in_peak:
+            # Starting a new peak
+            self.in_peak = True
+            self.peak_start_time = timestamp
+            
+        elif self.in_peak and not is_rising:
+            # Peak is ending - this was the maximum
+            if above_threshold:  # Only consider if still above threshold
+                new_candidate = {
+                    'time': timestamp,
+                    'score': self.prev_score,  # Use previous (peak) score
+                    'threshold': threshold,
+                    'acc_peak': np.linalg.norm(acc_xyz),
+                    'gyro_peak': np.linalg.norm(gyro_xyz)
+                }
+                
+                # Update candidate if this is better than current
+                if (self.candidate_peak is None or 
+                    new_candidate['score'] > self.candidate_peak['score']):
+                    self.candidate_peak = new_candidate
+            
+            self.in_peak = False
+        
+        self.prev_score = score
+    
+    def _confirm_candidate(self) -> Optional[Dict[str, Any]]:
+        """Confirm the current candidate as a real event."""
+        if not self.candidate_peak:
+            return None
+            
+        # Additional confirmation threshold check
+        confirm_threshold = self.baseline_tracker.get_threshold(self.confirm_threshold)
+        if self.candidate_peak['score'] < confirm_threshold:
+            # Candidate doesn't meet confirmation threshold
+            self.candidate_peak = None
+            return None
+        
+        # Confirm the event
+        event = {
+            'index': -1,  # Not applicable for streaming
+            'time': float(self.candidate_peak['time']),
+            'score': float(self.candidate_peak['score']),
+            'threshold': float(self.candidate_peak['threshold']),
+            'acc_peak': float(self.candidate_peak['acc_peak']),
+            'gyro_peak': float(self.candidate_peak['gyro_peak'])
+        }
+        
+        self.last_confirmed_time = self.candidate_peak['time']
+        self.candidate_peak = None
+        
+        return event
 
 
 def get_default_config() -> Dict[str, Any]:
@@ -805,6 +1072,14 @@ def get_default_config() -> Dict[str, Any]:
             'peakwin_s': 0.04,
             'gatewin_s': 0.18,
             'min_iei_s': 0.10,
+        },
+        'streaming_params': {
+            'min_interval_s': 0.300,  # 300ms physiological constraint
+            'decision_latency_s': 0.200,  # 200ms decision window
+            'k_mad_liberal': 3.2,  # Liberal threshold for candidates - balanced
+            'k_mad_confirm': 4.2,  # Confirmation threshold - balanced
+            'baseline_alpha': 0.001,  # EMA decay for baseline tracking
+            'hampel_k': 3.0,  # Outlier detection threshold
         },
         'walking_params': {
             'k_mad': 3.0,
@@ -879,6 +1154,69 @@ def get_default_config() -> Dict[str, Any]:
             'chunk_size': 10000,
         }
     }
+
+
+def clean_analysis_directories(auto_confirm: bool = False):
+    """Delete all analysis_*_*_* directories safely."""
+    import glob
+    import shutil
+    
+    # Get current working directory
+    current_dir = Path.cwd()
+    print(f"Looking for analysis directories in: {current_dir}")
+    
+    # Find all directories matching the pattern analysis_*_*_*
+    pattern = "analysis_*_*_*"
+    directories = glob.glob(str(current_dir / pattern))
+    
+    # Filter to ensure they are directories and match our exact pattern
+    analysis_dirs = []
+    for path in directories:
+        path_obj = Path(path)
+        if path_obj.is_dir():
+            # Verify it matches our expected pattern: analysis_SESSIONID_TIMESTAMP
+            parts = path_obj.name.split('_')
+            if len(parts) >= 3 and parts[0] == 'analysis':
+                analysis_dirs.append(path_obj)
+    
+    if not analysis_dirs:
+        print("No analysis directories found matching pattern 'analysis_*_*_*'")
+        return
+    
+    # Show what would be deleted
+    print(f"\nFound {len(analysis_dirs)} analysis directories:")
+    for dir_path in sorted(analysis_dirs):
+        print(f"  - {dir_path.name}")
+    
+    # Confirm deletion
+    if auto_confirm:
+        print(f"\nAuto-deleting {len(analysis_dirs)} directories...")
+        deleted_count = 0
+        for dir_path in analysis_dirs:
+            try:
+                shutil.rmtree(dir_path)
+                print(f"Deleted: {dir_path.name}")
+                deleted_count += 1
+            except Exception as e:
+                print(f"Error deleting {dir_path.name}: {e}")
+        print(f"Successfully deleted {deleted_count} directories.")
+    else:
+        try:
+            response = input(f"\nDelete these {len(analysis_dirs)} directories? [y/N]: ").strip().lower()
+            if response in ['y', 'yes']:
+                deleted_count = 0
+                for dir_path in analysis_dirs:
+                    try:
+                        shutil.rmtree(dir_path)
+                        print(f"Deleted: {dir_path.name}")
+                        deleted_count += 1
+                    except Exception as e:
+                        print(f"Error deleting {dir_path.name}: {e}")
+                print(f"\nSuccessfully deleted {deleted_count} directories.")
+            else:
+                print("Deletion cancelled.")
+        except (KeyboardInterrupt, EOFError):
+            print("\nDeletion cancelled.")
 
 
 def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
@@ -1001,10 +1339,14 @@ Examples:
   %(prog)s --input session_data.csv --config config.yaml --output results/
   %(prog)s --input session_data.json --config config.yaml --output results/
   %(prog)s --input data/ --config config.yaml --output results/ --batch
+  
+Algorithm Comparison:
+  %(prog)s --input session.csv --detector stationary --output results_batch/
+  %(prog)s --input session.csv --detector streaming --output results_streaming/
         """
     )
     
-    parser.add_argument('--input', '-i', required=True,
+    parser.add_argument('--input', '-i', required=False,
                        help='Input session data file (CSV or JSON)')
     parser.add_argument('--config', '-c', default=None,
                        help='Configuration YAML file (optional, uses defaults if not provided)')
@@ -1012,7 +1354,7 @@ Examples:
                        help='Output directory (optional, uses current directory if not provided)')
     parser.add_argument('--batch', action='store_true',
                        help='Process multiple files in input directory')
-    parser.add_argument('--detector', choices=['stationary', 'walking'],
+    parser.add_argument('--detector', choices=['stationary', 'streaming', 'walking'],
                        help='Override detector type from config')
     parser.add_argument('--verbose', '-v', action='store_true',
                        help='Enable verbose output')
@@ -1026,8 +1368,23 @@ Examples:
                        help='Generate visual debug plots with rejection categories')
     parser.add_argument('--debug-all', action='store_true',
                        help='Enable all debug modes')
+    parser.add_argument('--clean', action='store_true',
+                       help='Delete all analysis_*_*_* directories (auto-confirm if used with --input)')
     
     args = parser.parse_args()
+    
+    # Handle clean flag - if no input specified, clean and exit
+    if args.clean and not args.input:
+        clean_analysis_directories()
+        return
+    
+    # If clean flag is specified with input, clean first then continue
+    if args.clean and args.input:
+        clean_analysis_directories(auto_confirm=True)
+    
+    # Validate required arguments when not just cleaning
+    if not args.input:
+        parser.error("the following arguments are required: --input/-i")
     
     # Handle debug flags
     if args.debug_all:
@@ -1053,6 +1410,8 @@ Examples:
         detector_type = config.get('analysis', {}).get('detector_type', 'stationary')
         if detector_type == 'stationary':
             detector = StationaryDetector(config)
+        elif detector_type == 'streaming':
+            detector = StreamingPhysiologicalDetector(config)
         else:
             raise NotImplementedError(f"Detector type '{detector_type}' not implemented yet")
         
@@ -1072,7 +1431,10 @@ Examples:
             
             # Run detection (always collect rejections for visual debug)
             print(f"\nRunning {detector_type} detection...")
-            results = detector.detect(session_data, collect_rejections=True)
+            if detector_type == 'streaming':
+                results = detector.detect_streaming(session_data)
+            else:
+                results = detector.detect(session_data, collect_rejections=True)
             
             # Run debug analysis if requested
             debug_results = {}
@@ -1080,13 +1442,13 @@ Examples:
             # Always run visual debug by default
             debug_results['visual'] = True
             
+            # Always run basic threshold analysis for missed peaks markers
+            threshold_debugger = ThresholdDebugger(config)
+            debug_results['threshold'] = threshold_debugger.analyze_missed_peaks(session_data)
+            
             if args.debug_detection:
                 debug_detector = DebugDetector(config)
                 debug_results['detection'] = debug_detector.debug_detect(session_data)
-            
-            if args.debug_threshold:
-                threshold_debugger = ThresholdDebugger(config)
-                debug_results['threshold'] = threshold_debugger.analyze_missed_peaks(session_data)
             
             # Save results (pass debug_results to be included)
             print(f"\nSaving results...")

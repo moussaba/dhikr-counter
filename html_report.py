@@ -39,7 +39,7 @@ class HTMLReportGenerator:
         """
         
         # Prepare data for visualization
-        chart_data = self._prepare_chart_data(results)
+        chart_data = self._prepare_chart_data(results, debug_results)
         
         # Generate HTML content
         html_content = self._generate_html(results, chart_data, debug_results)
@@ -52,14 +52,26 @@ class HTMLReportGenerator:
         print(f"✓ Generated HTML report: {report_path}")
         return report_path
     
-    def _prepare_chart_data(self, results: Dict[str, Any]) -> Dict[str, Any]:
+    def _prepare_chart_data(self, results: Dict[str, Any], debug_results: Dict[str, Any] = None) -> Dict[str, Any]:
         """Prepare data for Chart.js visualization."""
         
         data = results['data']
         events = results['events']
         
-        # Time series data
-        time = data['time'].tolist()
+        # Time series data - use precise seconds from start
+        time_raw = data['time'].tolist()
+        start_time = time_raw[0]
+        time = [round(t - start_time, 3) for t in time_raw]  # Precise seconds from start
+        
+        # Calculate max time for tick generation
+        max_time = max(time)
+        tick_interval = max(1, int(max_time / 20))  # Reasonable number of ticks
+        x_ticks = list(range(0, int(max_time) + tick_interval, tick_interval))
+        x_axis_config = {
+            'tick_interval': tick_interval,
+            'max_time': int(max_time)
+        }
+        
         score = results['score'].tolist()
         threshold = results['threshold'].tolist()
         
@@ -90,8 +102,8 @@ class HTMLReportGenerator:
             }
         }
         
-        # Event markers
-        event_times = [e['time'] for e in events]
+        # Event markers - use precise seconds from start
+        event_times = [round(e['time'] - start_time, 3) for e in events]
         event_scores = [e['score'] for e in events]
         event_acc = [e['acc_peak'] for e in events]
         event_gyro = [e['gyro_peak'] for e in events]
@@ -107,14 +119,14 @@ class HTMLReportGenerator:
                 'z_dg': comp_data['z_dg'].tolist()
             }
         
-        # Visual debug data (rejected candidates)
+        # Visual debug data (rejected candidates) - convert to hundreds of milliseconds
         rejected_candidates = {}
         if 'rejected_candidates' in results:
             rejected = results['rejected_candidates']
             for category, candidates in rejected.items():
                 if candidates:
                     rejected_candidates[category] = {
-                        'times': [c['time'] for c in candidates],
+                        'times': [round(c['time'] - start_time, 3) for c in candidates],
                         'scores': [c['score'] for c in candidates],
                         'acc_peaks': [c['acc_peak'] for c in candidates],
                         'gyro_peaks': [c['gyro_peak'] for c in candidates]
@@ -124,12 +136,61 @@ class HTMLReportGenerator:
                         'times': [], 'scores': [], 'acc_peaks': [], 'gyro_peaks': []
                     }
 
+        # Extract missed peaks data from threshold debug results
+        missed_peaks_data = {'times': [], 'scores': []}
+        if debug_results and 'threshold' in debug_results:
+            threshold_data = debug_results['threshold']
+            missed_peaks = threshold_data.get('missed_peaks', [])
+            for i, peak in enumerate(missed_peaks):
+                # Convert time to precise seconds from start
+                peak_time = float(round(peak['time'] - start_time, 3))
+                peak_score = float(peak['score'])
+                missed_peaks_data['times'].append(peak_time)
+                missed_peaks_data['scores'].append(peak_score)
+        
+        # Calculate inter-arrival times for all peaks (detected + missed)
+        all_peak_times = []
+        all_peak_types = []
+        
+        # Add detected events
+        for event_time in event_times:
+            all_peak_times.append(event_time)
+            all_peak_types.append('detected')
+        
+        # Add missed peaks
+        for missed_time in missed_peaks_data['times']:
+            all_peak_times.append(missed_time)
+            all_peak_types.append('missed')
+        
+        # Sort all peaks by time
+        if all_peak_times:
+            sorted_pairs = sorted(zip(all_peak_times, all_peak_types))
+            all_peak_times_sorted, all_peak_types_sorted = zip(*sorted_pairs)
+            
+            # Calculate inter-arrival times in milliseconds
+            inter_arrival_times = []
+            inter_arrival_types = []
+            for i in range(1, len(all_peak_times_sorted)):
+                interval_ms = (all_peak_times_sorted[i] - all_peak_times_sorted[i-1]) * 1000  # Convert to ms (times are in seconds)
+                inter_arrival_times.append(float(interval_ms))
+                # Type is based on the second peak in the pair
+                inter_arrival_types.append(all_peak_types_sorted[i])
+            
+            inter_arrival_data = {
+                'times': list(range(len(inter_arrival_times))),  # Sequential indices
+                'intervals': inter_arrival_times,
+                'types': inter_arrival_types
+            }
+        else:
+            inter_arrival_data = {'times': [], 'intervals': [], 'types': []}
+
         return {
             'time': time,
             'fusion_score': {
                 'data': score,
                 'threshold': threshold,
-                'events': {'times': event_times, 'scores': event_scores}
+                'events': {'times': event_times, 'scores': event_scores},
+                'missed_peaks': missed_peaks_data
             },
             'acceleration': {
                 'data': acc_signal,
@@ -145,7 +206,10 @@ class HTMLReportGenerator:
             },
             'raw_data': raw_data,
             'components': components,
-            'rejected_candidates': rejected_candidates
+            'rejected_candidates': rejected_candidates,
+            'inter_arrival': inter_arrival_data,
+            'x_ticks': x_ticks,
+            'x_axis_config': x_axis_config
         }
     
     def _generate_html(self, results: Dict[str, Any], chart_data: Dict[str, Any], debug_results: Dict[str, Any] = None) -> str:
@@ -221,6 +285,14 @@ class HTMLReportGenerator:
         </div>
         
         <div class="section">
+            <h2>Inter-Arrival Time Analysis</h2>
+            <p><em>Time intervals between consecutive peaks (detected and missed) in milliseconds. Shows rhythm and timing variability.</em></p>
+            <div class="chart-container">
+                <canvas id="interArrivalChart"></canvas>
+            </div>
+        </div>
+        
+        <div class="section">
             <h2>Raw Sensor Data</h2>
             <div class="chart-row">
                 <div class="chart-container half">
@@ -255,9 +327,11 @@ class HTMLReportGenerator:
             </div>
         </div>
         
-        {self._generate_debug_sections(debug_results) if debug_results else ''}
+        {self._generate_algorithm_explanation(results['detector_type'])}
         
-        {self._generate_visual_debug_section(chart_data) if chart_data.get('rejected_candidates') else ''}
+        {self._generate_debug_sections(debug_results) if debug_results and results['detector_type'] != 'streaming' else ''}
+        
+        {self._generate_visual_debug_section(chart_data) if chart_data.get('rejected_candidates') and results['detector_type'] != 'streaming' else ''}
         
         <footer class="footer">
             Generated by DhikrCounter Pinch Detection Analysis Tool
@@ -821,6 +895,29 @@ class HTMLReportGenerator:
         
         return ''.join(param_items)
     
+    def _generate_algorithm_explanation(self, detector_type: str) -> str:
+        """Generate algorithm-specific explanation section."""
+        if detector_type == 'streaming':
+            return """
+        <div class="section">
+            <h2>Streaming Algorithm Overview</h2>
+            <div class="algorithm-explanation">
+                <p>The <strong>Streaming Physiological Detector</strong> is designed for real-time implementation on smartwatch devices. Key features:</p>
+                <ul>
+                    <li><strong>Real-time Processing:</strong> Processes sensor data sample-by-sample with ≤200ms latency</li>
+                    <li><strong>Physiological Constraints:</strong> Enforces minimum 300ms interval between events (human finger tapping limit)</li>
+                    <li><strong>Two-threshold System:</strong> Liberal threshold (4.5σ) identifies candidates, confirmation threshold (5.5σ) validates events</li>
+                    <li><strong>Decision Buffer:</strong> 200ms buffer allows evaluation of candidate quality before confirmation</li>
+                    <li><strong>Online Baseline Tracking:</strong> Continuously adapts to signal changes using robust statistics</li>
+                </ul>
+                <p><strong>Note:</strong> This algorithm prioritizes physiological plausibility over raw signal amplitude, 
+                   making it ideal for detecting intentional finger movements while rejecting noise and artifacts.</p>
+            </div>
+        </div>
+            """
+        else:
+            return ""
+    
     def _generate_javascript(self, chart_data: Dict[str, Any], colors: Dict[str, str]) -> str:
         """Generate JavaScript for Chart.js visualizations."""
         
@@ -848,12 +945,19 @@ class HTMLReportGenerator:
             }},
             scales: {{
                 x: {{
+                    type: 'linear',
                     title: {{
                         display: true,
-                        text: 'Time (s)'
+                        text: 'Time (seconds)'
                     }},
                     grid: {{
                         color: colors.grid
+                    }},
+                    min: 0,
+                    max: Math.ceil(chartData.x_axis_config.max_time / chartData.x_axis_config.tick_interval) * chartData.x_axis_config.tick_interval,
+                    ticks: {{
+                        stepSize: chartData.x_axis_config.tick_interval,
+                        precision: 0
                     }}
                 }},
                 y: {{
@@ -869,11 +973,10 @@ class HTMLReportGenerator:
         new Chart(fusionCtx, {{
             type: 'line',
             data: {{
-                labels: chartData.time,
                 datasets: [
                     {{
                         label: 'Fusion Score',
-                        data: chartData.fusion_score.data,
+                        data: chartData.time.map((t, i) => ({{x: t, y: chartData.fusion_score.data[i]}})),
                         borderColor: colors.primary,
                         backgroundColor: colors.primary + '20',
                         borderWidth: 1.5,
@@ -882,7 +985,7 @@ class HTMLReportGenerator:
                     }},
                     {{
                         label: 'Adaptive Threshold',
-                        data: chartData.fusion_score.threshold,
+                        data: chartData.time.map((t, i) => ({{x: t, y: chartData.fusion_score.threshold[i]}})),
                         borderColor: colors.secondary,
                         backgroundColor: colors.secondary + '20',
                         borderWidth: 2,
@@ -901,6 +1004,21 @@ class HTMLReportGenerator:
                         borderColor: colors.warning,
                         pointRadius: 6,
                         pointHoverRadius: 8,
+                    }},
+                    {{
+                        label: 'Missed Peaks',
+                        data: chartData.fusion_score.missed_peaks && chartData.fusion_score.missed_peaks.times.length > 0 
+                            ? chartData.fusion_score.missed_peaks.times.map((time, idx) => ({{
+                                x: time,
+                                y: chartData.fusion_score.missed_peaks.scores[idx]
+                            }}))
+                            : [],
+                        type: 'scatter',
+                        backgroundColor: '#000000',
+                        borderColor: '#000000',
+                        pointRadius: 4,
+                        pointHoverRadius: 6,
+                        pointStyle: 'triangle',
                     }}
                 ]
             }},
@@ -926,16 +1044,93 @@ class HTMLReportGenerator:
             }}
         }});
         
+        // Inter-Arrival Time Chart
+        const interArrivalCtx = document.getElementById('interArrivalChart').getContext('2d');
+        new Chart(interArrivalCtx, {{
+            type: 'line',
+            data: {{
+                labels: chartData.inter_arrival.times,
+                datasets: [
+                    {{
+                        label: 'Inter-Arrival Times',
+                        data: chartData.inter_arrival.intervals,
+                        borderColor: colors.primary,
+                        backgroundColor: chartData.inter_arrival.types.map(type => 
+                            type === 'detected' ? colors.success + '40' : '#00000040'
+                        ),
+                        pointBackgroundColor: chartData.inter_arrival.types.map(type => 
+                            type === 'detected' ? colors.success : '#000000'
+                        ),
+                        pointBorderColor: chartData.inter_arrival.types.map(type => 
+                            type === 'detected' ? colors.success : '#000000'
+                        ),
+                        borderWidth: 2,
+                        fill: false,
+                        pointRadius: 4,
+                        pointHoverRadius: 6,
+                    }}
+                ]
+            }},
+            options: {{
+                ...commonOptions,
+                plugins: {{
+                    ...commonOptions.plugins,
+                    title: {{
+                        display: true,
+                        text: 'Inter-Arrival Times Between Peaks'
+                    }},
+                    legend: {{
+                        display: true,
+                        labels: {{
+                            generateLabels: function(chart) {{
+                                return [
+                                    {{
+                                        text: 'Detected Peak Intervals',
+                                        fillStyle: colors.success,
+                                        strokeStyle: colors.success,
+                                        pointStyle: 'circle'
+                                    }},
+                                    {{
+                                        text: 'Missed Peak Intervals', 
+                                        fillStyle: '#000000',
+                                        strokeStyle: '#000000',
+                                        pointStyle: 'circle'
+                                    }}
+                                ];
+                            }}
+                        }}
+                    }}
+                }},
+                scales: {{
+                    ...commonOptions.scales,
+                    x: {{
+                        ...commonOptions.scales.x,
+                        title: {{
+                            display: true,
+                            text: 'Peak Sequence #'
+                        }}
+                    }},
+                    y: {{
+                        ...commonOptions.scales.y,
+                        title: {{
+                            display: true,
+                            text: 'Interval (ms)'
+                        }},
+                        beginAtZero: true
+                    }}
+                }}
+            }}
+        }});
+        
         // Acceleration Chart
         const accCtx = document.getElementById('accelerationChart').getContext('2d');
         new Chart(accCtx, {{
             type: 'line',
             data: {{
-                labels: chartData.time,
                 datasets: [
                     {{
                         label: chartData.acceleration.label,
-                        data: chartData.acceleration.data,
+                        data: chartData.time.map((t, i) => ({{x: t, y: chartData.acceleration.data[i]}})),
                         borderColor: colors.success,
                         backgroundColor: colors.success + '20',
                         borderWidth: 1,
@@ -952,6 +1147,26 @@ class HTMLReportGenerator:
                         backgroundColor: colors.warning,
                         borderColor: colors.warning,
                         pointRadius: 4,
+                    }},
+                    {{
+                        label: 'Acceleration Gate',
+                        data: chartData.time.map(t => ({{x: t, y: chartData.acceleration.gate}})),
+                        borderColor: colors.danger,
+                        backgroundColor: 'transparent',
+                        borderWidth: 2,
+                        borderDash: [5, 5],
+                        fill: false,
+                        pointRadius: 0,
+                    }},
+                    {{
+                        label: '-Acceleration Gate',
+                        data: chartData.time.map(t => ({{x: t, y: -chartData.acceleration.gate}})),
+                        borderColor: colors.danger,
+                        backgroundColor: 'transparent',
+                        borderWidth: 2,
+                        borderDash: [5, 5],
+                        fill: false,
+                        pointRadius: 0,
                     }}
                 ]
             }},
@@ -982,11 +1197,10 @@ class HTMLReportGenerator:
         new Chart(gyroCtx, {{
             type: 'line',
             data: {{
-                labels: chartData.time,
                 datasets: [
                     {{
                         label: chartData.gyroscope.label,
-                        data: chartData.gyroscope.data,
+                        data: chartData.time.map((t, i) => ({{x: t, y: chartData.gyroscope.data[i]}})),
                         borderColor: colors.accent,
                         backgroundColor: colors.accent + '20',
                         borderWidth: 1,
@@ -1003,6 +1217,26 @@ class HTMLReportGenerator:
                         backgroundColor: colors.warning,
                         borderColor: colors.warning,
                         pointRadius: 4,
+                    }},
+                    {{
+                        label: 'Gyroscope Gate',
+                        data: chartData.time.map(t => ({{x: t, y: chartData.gyroscope.gate}})),
+                        borderColor: colors.danger,
+                        backgroundColor: 'transparent',
+                        borderWidth: 2,
+                        borderDash: [5, 5],
+                        fill: false,
+                        pointRadius: 0,
+                    }},
+                    {{
+                        label: '-Gyroscope Gate',
+                        data: chartData.time.map(t => ({{x: t, y: -chartData.gyroscope.gate}})),
+                        borderColor: colors.danger,
+                        backgroundColor: 'transparent',
+                        borderWidth: 2,
+                        borderDash: [5, 5],
+                        fill: false,
+                        pointRadius: 0,
                     }}
                 ]
             }},
@@ -1321,6 +1555,23 @@ class HTMLReportGenerator:
                     borderColor: colors.success,
                     pointRadius: 6,
                     pointHoverRadius: 8,
+                    type: 'scatter',
+                    showLine: false
+                }},
+                // Missed peaks
+                {{
+                    label: 'Missed Peaks',
+                    data: chartData.fusion_score.missed_peaks && chartData.fusion_score.missed_peaks.times.length > 0 
+                        ? chartData.fusion_score.missed_peaks.times.map((time, idx) => ({{
+                            x: time,
+                            y: chartData.fusion_score.missed_peaks.scores[idx]
+                        }}))
+                        : [],
+                    backgroundColor: '#000000',
+                    borderColor: '#000000',
+                    pointRadius: 4,
+                    pointHoverRadius: 6,
+                    pointStyle: 'triangle',
                     type: 'scatter',
                     showLine: false
                 }}
