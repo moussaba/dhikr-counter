@@ -7,14 +7,17 @@ class WatchSessionManager: NSObject, ObservableObject {
     
     @Published var transferStatus: String = "Initializing..."
     @Published var isTransferring: Bool = false
+    @Published var transferProgress: Double = 0.0
     @Published var lastTransferError: Error?
     
     private var pendingTransfers: [PendingTransfer] = []
     private var exportFormat: String = "JSON" // Default format
+    private var currentTransfer: WCSessionFileTransfer?
     
     private struct PendingTransfer {
         let sensorData: [SensorReading]
         let detectionEvents: [DetectionEvent]
+        let motionInterruptions: [MotionInterruption]
         let sessionId: UUID
     }
     
@@ -37,11 +40,11 @@ class WatchSessionManager: NSObject, ObservableObject {
         transferStatus = "WCSession activation requested"
     }
     
-    func transferSensorData(sensorData: [SensorReading], detectionEvents: [DetectionEvent], sessionId: UUID) {
+    func transferSensorData(sensorData: [SensorReading], detectionEvents: [DetectionEvent], motionInterruptions: [MotionInterruption], sessionId: UUID) {
         
         let session = WCSession.default
         guard session.activationState == .activated else {
-            let pendingTransfer = PendingTransfer(sensorData: sensorData, detectionEvents: detectionEvents, sessionId: sessionId)
+            let pendingTransfer = PendingTransfer(sensorData: sensorData, detectionEvents: detectionEvents, motionInterruptions: motionInterruptions, sessionId: sessionId)
             pendingTransfers.append(pendingTransfer)
             transferStatus = "Queued - waiting for activation (\(pendingTransfers.count) pending)"
             return
@@ -49,7 +52,7 @@ class WatchSessionManager: NSObject, ObservableObject {
         
         Task {
             do {
-                try await performFileTransfer(sensorData: sensorData, detectionEvents: detectionEvents, sessionId: sessionId)
+                try await performFileTransfer(sensorData: sensorData, detectionEvents: detectionEvents, motionInterruptions: motionInterruptions, sessionId: sessionId)
             } catch {
                 await MainActor.run {
                     self.transferStatus = "Transfer error: \(error.localizedDescription)"
@@ -59,7 +62,7 @@ class WatchSessionManager: NSObject, ObservableObject {
         }
     }
     
-    private func performFileTransfer(sensorData: [SensorReading], detectionEvents: [DetectionEvent], sessionId: UUID) async throws {
+    private func performFileTransfer(sensorData: [SensorReading], detectionEvents: [DetectionEvent], motionInterruptions: [MotionInterruption], sessionId: UUID) async throws {
         let tempDir = FileManager.default.temporaryDirectory
         let timestamp = Int(Date().timeIntervalSince1970)
         let fileExtension = exportFormat.lowercased()
@@ -74,13 +77,14 @@ class WatchSessionManager: NSObject, ObservableObject {
         
         if exportFormat == "CSV" {
             // Create CSV format
-            fileData = try createCSVData(sensorData: sensorData, detectionEvents: detectionEvents, sessionId: sessionId)
+            fileData = try createCSVData(sensorData: sensorData, detectionEvents: detectionEvents, motionInterruptions: motionInterruptions, sessionId: sessionId)
             metadata = [
                 "type": "sessionFile",
                 "format": "CSV",
                 "sessionId": sessionId.uuidString,
                 "sensorDataCount": String(sensorData.count),
                 "detectionEventCount": String(detectionEvents.count),
+                "motionInterruptionCount": String(motionInterruptions.count),
                 "timestamp": String(Date().timeIntervalSince1970),
                 "fileSize": String(fileData.count)
             ]
@@ -90,7 +94,8 @@ class WatchSessionManager: NSObject, ObservableObject {
                 sessionId: sessionId,
                 timestamp: Date().timeIntervalSince1970,
                 sensorData: sensorData,
-                detectionEvents: detectionEvents
+                detectionEvents: detectionEvents,
+                motionInterruptions: motionInterruptions
             )
             
             let encoder = JSONEncoder()
@@ -109,11 +114,35 @@ class WatchSessionManager: NSObject, ObservableObject {
         
         try fileData.write(to: fileURL, options: .atomic)
         
-        WCSession.default.transferFile(fileURL, metadata: metadata)
+        let transfer = WCSession.default.transferFile(fileURL, metadata: metadata)
         
         await MainActor.run {
+            self.currentTransfer = transfer
             self.isTransferring = true
+            self.transferProgress = 0.0
             self.transferStatus = "File transfer initiated (\(sensorData.count) readings, \(ByteCountFormatter.string(fromByteCount: Int64(fileData.count), countStyle: .file)))"
+        }
+        
+        // Start monitoring transfer progress
+        startProgressMonitoring()
+    }
+    
+    private func startProgressMonitoring() {
+        Task {
+            while isTransferring, let transfer = currentTransfer {
+                await MainActor.run {
+                    // WCSessionFileTransfer doesn't provide built-in progress tracking
+                    // We'll simulate progress based on transfer state and time elapsed
+                    if transfer.isTransferring {
+                        // Simulate progress based on time (watchOS transfers are usually quick)
+                        self.transferProgress = min(0.9, self.transferProgress + 0.1)
+                        self.transferStatus = "Transferring to iPhone... (\(Int(self.transferProgress * 100))%)"
+                    }
+                }
+                
+                // Check every 200ms for smooth progress updates
+                try? await Task.sleep(for: .milliseconds(200))
+            }
         }
     }
     
@@ -128,12 +157,16 @@ class WatchSessionManager: NSObject, ObservableObject {
         }
     }
     
-    private func createCSVData(sensorData: [SensorReading], detectionEvents: [DetectionEvent], sessionId: UUID) throws -> Data {
+    private func createCSVData(sensorData: [SensorReading], detectionEvents: [DetectionEvent], motionInterruptions: [MotionInterruption], sessionId: UUID) throws -> Data {
         var csvContent = "time_s,epoch_s,userAccelerationX,userAccelerationY,userAccelerationZ,gravityX,gravityY,gravityZ,rotationRateX,rotationRateY,rotationRateZ,attitude_qW,attitude_qX,attitude_qY,attitude_qZ\n"
         
         let startTime = sensorData.first?.motionTimestamp ?? 0.0
         var invalidValueCount = 0
         
+        // Merge sensor data and motion interruptions by timestamp for chronological order
+        var allEvents: [(timestamp: Double, content: String)] = []
+        
+        // Add sensor readings
         for reading in sensorData {
             let relativeTime = reading.motionTimestamp - startTime
             let epochTime = reading.epochTimestamp
@@ -163,13 +196,27 @@ class WatchSessionManager: NSObject, ObservableObject {
                 invalidValueCount += invalidInThisRow
             }
             
-            let row = values.joined(separator: ",") + "\n"
-            csvContent += row
+            let row = values.joined(separator: ",")
+            allEvents.append((timestamp: reading.motionTimestamp, content: row))
+        }
+        
+        // Add motion interruptions as CSV comments
+        for interruption in motionInterruptions {
+            allEvents.append((timestamp: interruption.motionTimestamp, content: interruption.csvRow()))
+        }
+        
+        // Sort by timestamp and build final CSV
+        allEvents.sort { $0.timestamp < $1.timestamp }
+        for event in allEvents {
+            csvContent += event.content + "\n"
         }
         
         // Log data quality information
         if invalidValueCount > 0 {
             print("⚠️ CSV export quality warning: \(invalidValueCount) invalid values (NaN/Inf) found and preserved")
+        }
+        if motionInterruptions.count > 0 {
+            print("📝 CSV includes \(motionInterruptions.count) motion interruption events")
         }
         
         guard let data = csvContent.data(using: .utf8) else {
@@ -189,6 +236,7 @@ private struct SessionData: Codable {
     let timestamp: TimeInterval
     let sensorData: [SensorReading]
     let detectionEvents: [DetectionEvent]
+    let motionInterruptions: [MotionInterruption]
 }
 
 // MARK: - WCSessionDelegate
@@ -209,6 +257,7 @@ extension WatchSessionManager: @preconcurrency WCSessionDelegate {
                                 try await self.performFileTransfer(
                                     sensorData: pendingTransfer.sensorData,
                                     detectionEvents: pendingTransfer.detectionEvents,
+                                    motionInterruptions: pendingTransfer.motionInterruptions,
                                     sessionId: pendingTransfer.sessionId
                                 )
                             } catch {
@@ -265,9 +314,13 @@ extension WatchSessionManager: @preconcurrency WCSessionDelegate {
                 self.transferStatus = "File transfer failed: \(error.localizedDescription)"
                 self.lastTransferError = error
                 self.isTransferring = false
+                self.transferProgress = 0.0
+                self.currentTransfer = nil
             } else {
                 self.transferStatus = "✅ File transfer completed successfully"
+                self.transferProgress = 1.0
                 self.isTransferring = false
+                self.currentTransfer = nil
                 
                 // Clean up temporary file safely
                 let tempFileURL = fileTransfer.file.fileURL

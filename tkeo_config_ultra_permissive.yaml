@@ -1,0 +1,30 @@
+# Ultra-Permissive TKEO Configuration for Maximum Sensitivity
+# For catching subtle periodic pinches with minimal false rejection
+
+tkeo_params:
+  # Sampling and filtering  
+  fs: 50
+  bandpass_low: 0.5  # Very low cutoff for subtle movements
+  bandpass_high: 12.0  # Medium high cutoff
+  
+  # Very adaptive baseline
+  baseline_alpha: 0.08  # Fast adaptation
+  hampel_k: 5.0  # Very robust against outliers
+  
+  # Very sensitive gate thresholds
+  gate_k_accel: 1.8  # Very low threshold
+  gate_k_gyro: 1.8   # Very low threshold
+  gate_k_fusion: 1.8 # Very low fusion threshold
+  
+  # Balanced fusion
+  fusion_method: 'additive'
+  fusion_weight_accel: 1.0
+  fusion_weight_gyro: 0.8  # Reduce gyro to minimize movement artifacts
+  
+  # Ultra-permissive template verification
+  template_length: 8   # Very short templates (80ms)
+  template_confidence: 0.25  # Extremely low threshold
+  
+  # Minimal constraints
+  refractory_period_s: 0.150  # Very short refractory (150ms)
+  verification_window_s: 0.08  # Match template length

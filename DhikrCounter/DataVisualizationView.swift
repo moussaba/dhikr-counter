@@ -465,6 +465,9 @@ struct SessionDetailView: View {
 
 struct SessionOverviewCard: View {
     let session: DhikrSession
+    @ObservedObject private var dataManager = PhoneSessionManager.shared
+    @State private var isEditingNotes = false
+    @State private var notesText: String = ""
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -477,11 +480,57 @@ struct SessionOverviewCard: View {
                 OverviewItem(title: "Start Time", value: DateFormatter.sessionFormatter.string(from: session.startTime))
                 OverviewItem(title: "Duration", value: String(format: "%.1fs", session.sessionDuration))
                 OverviewItem(title: "Status", value: "Completed")
+                
+                // Motion interruption count
+                let interruptionCount = dataManager.getMotionInterruptionCount(for: session.id.uuidString)
+                if interruptionCount > 0 {
+                    OverviewItem(title: "Data Gaps", value: "\(interruptionCount) interruption\(interruptionCount == 1 ? "" : "s")")
+                        .foregroundColor(.orange)
+                }
+            }
+            
+            // Notes section
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Session Notes")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                    
+                    Spacer()
+                    
+                    Button(isEditingNotes ? "Save" : "Edit") {
+                        if isEditingNotes {
+                            // Save notes
+                            dataManager.updateSessionNotes(sessionId: session.id.uuidString, notes: notesText.isEmpty ? nil : notesText)
+                        } else {
+                            // Start editing
+                            notesText = session.sessionNotes ?? ""
+                        }
+                        isEditingNotes.toggle()
+                    }
+                    .font(.caption)
+                    .foregroundColor(.blue)
+                }
+                
+                if isEditingNotes {
+                    TextField("Add notes about this session...", text: $notesText, axis: .vertical)
+                        .textFieldStyle(.roundedBorder)
+                        .lineLimit(3...6)
+                } else {
+                    Text(session.sessionNotes?.isEmpty == false ? session.sessionNotes! : "No notes added")
+                        .font(.caption)
+                        .foregroundColor(session.sessionNotes?.isEmpty == false ? .primary : .secondary)
+                        .italic(session.sessionNotes?.isEmpty != false)
+                        .padding(.vertical, 4)
+                }
             }
         }
         .padding()
         .background(Color(.systemBackground))
         .cornerRadius(16)
+        .onAppear {
+            notesText = session.sessionNotes ?? ""
+        }
     }
 }
 

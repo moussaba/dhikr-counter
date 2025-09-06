@@ -591,11 +591,14 @@ class AdvancedPinchDetector:
         return detected_events
 
 def load_session_data(file_path):
-    """Load session data from CSV file"""
+    """Load session data from CSV file with metadata extraction"""
     print(f"Loading session data from {file_path}")
     
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Session file not found: {file_path}")
+    
+    # Extract metadata from comment lines
+    metadata = _extract_csv_metadata(file_path)
     
     # Load CSV data, skipping comment lines that start with #
     df = pd.read_csv(file_path, comment='#')
@@ -619,7 +622,53 @@ def load_session_data(file_path):
     
     print(f"Loaded {len(timestamps)} samples, duration: {timestamps[-1]:.1f} seconds")
     
-    return timestamps, accel_data, gyro_data
+    # Display validation info if available
+    if 'actualPinchCount' in metadata:
+        print(f"Expected pinch count from metadata: {metadata['actualPinchCount']}")
+    
+    return timestamps, accel_data, gyro_data, metadata
+
+def _extract_csv_metadata(file_path):
+    """Extract metadata from CSV comment lines"""
+    metadata = {}
+    
+    with open(file_path, 'r') as f:
+        for line in f:
+            if line.startswith('#'):
+                if 'Session ID:' in line:
+                    metadata['sessionId'] = line.split('Session ID:')[1].strip()
+                elif 'Duration:' in line:
+                    duration_str = line.split('Duration:')[1].strip().replace('s', '')
+                    try:
+                        metadata['duration'] = float(duration_str)
+                    except ValueError:
+                        pass
+                elif 'Total Readings:' in line:
+                    try:
+                        metadata['totalReadings'] = int(line.split('Total Readings:')[1].strip())
+                    except ValueError:
+                        pass
+                elif 'update_interval_s=' in line:
+                    try:
+                        metadata['update_interval_s'] = float(line.split('update_interval_s=')[1].strip())
+                    except ValueError:
+                        pass
+                elif 'Start Time:' in line:
+                    metadata['startTime'] = line.split('Start Time:')[1].strip()
+                elif 'app=' in line:
+                    parts = line.strip('#').strip().split()
+                    for part in parts:
+                        if '=' in part:
+                            key, value = part.split('=', 1)
+                            metadata[key] = value
+                elif 'Actual Pinch Count:' in line:
+                    # Parse the expected pinch count for validation
+                    try:
+                        metadata['actualPinchCount'] = int(line.split('Actual Pinch Count:')[1].strip())
+                    except ValueError:
+                        pass
+    
+    return metadata
 
 def load_analyze_session_templates(analysis_results_dir, timestamps, confidence_threshold=3.0):
     """Load templates from analyze_session.py results (more accurate than streaming)
@@ -876,8 +925,8 @@ def create_templates_for_detector(timestamps, accel_data, gyro_data, detector, a
     
     return template_indices
 
-def generate_html_report(detector, session_info, output_dir, time_range=None, y_range=None):
-    """Generate comprehensive HTML report with debug plots"""
+def generate_html_report(detector, session_info, output_dir, time_range=None, y_range=None, validation_metrics=None):
+    """Generate comprehensive HTML report with debug plots and validation results"""
     
     debug_data = detector.debug_data
     timestamps = debug_data['timestamps']
@@ -1087,6 +1136,12 @@ def generate_html_report(detector, session_info, output_dir, time_range=None, y_
                 background: white; padding: 20px; border-radius: 10px; 
                 box-shadow: 0 2px 10px rgba(0,0,0,0.05); border-left: 4px solid #667eea;
             }}
+            .metric-card.validation-perfect {{
+                border-left: 4px solid #28a745; 
+            }}
+            .metric-card.validation-warning {{
+                border-left: 4px solid #dc3545; 
+            }}
             .metric-value {{ font-size: 24px; font-weight: bold; color: #667eea; }}
             .metric-label {{ color: #666; font-size: 14px; margin-top: 5px; }}
             
@@ -1155,7 +1210,45 @@ def generate_html_report(detector, session_info, output_dir, time_range=None, y_
                     <div class="metric-label">Events/Minute</div>
                 </div>
             </div>
-        </div>
+        </div>"""
+
+    # Add validation metrics section if available
+    if validation_metrics:
+        html_content += f"""
+        <div class="section">
+            <h2>Validation Results</h2>
+            <div class="metrics-grid">
+                <div class="metric-card {'validation-perfect' if validation_metrics['expected_count'] == validation_metrics['detected_count'] else 'validation-warning'}">
+                    <div class="metric-value">{validation_metrics['expected_count']}</div>
+                    <div class="metric-label">Expected Count</div>
+                </div>
+                <div class="metric-card {'validation-perfect' if validation_metrics['expected_count'] == validation_metrics['detected_count'] else 'validation-warning'}">
+                    <div class="metric-value">{validation_metrics['detected_count']}</div>
+                    <div class="metric-label">Detected Count</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">{validation_metrics['absolute_error']}</div>
+                    <div class="metric-label">Absolute Error</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">{validation_metrics['relative_error']:.1%}</div>
+                    <div class="metric-label">Relative Error</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">{validation_metrics['detection_recall']:.1%}</div>
+                    <div class="metric-label">Detection Recall</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">{validation_metrics['detection_precision']:.1%}</div>
+                    <div class="metric-label">Detection Precision</div>
+                </div>
+            </div>
+            <div style="text-align: center; margin: 15px 0; padding: 10px; border-radius: 8px; {'background: #d4edda; color: #155724;' if validation_metrics['expected_count'] == validation_metrics['detected_count'] else 'background: #f8d7da; color: #721c24;'}">
+                {'✓ Perfect Match!' if validation_metrics['expected_count'] == validation_metrics['detected_count'] else ('⚠️ Over-detection: ' + str(validation_metrics['detected_count'] - validation_metrics['expected_count']) + ' extra events' if validation_metrics['detected_count'] > validation_metrics['expected_count'] else '⚠️ Under-detection: ' + str(validation_metrics['expected_count'] - validation_metrics['detected_count']) + ' missed events')}
+            </div>
+        </div>"""
+    
+    html_content += """
         
         <div class="section">
             <h2>Algorithm Configuration</h2>
@@ -1296,14 +1389,15 @@ def main():
             config_data = yaml.safe_load(f)
             config = config_data.get('tkeo_params', {})
     
-    # Load session data
-    timestamps, accel_data, gyro_data = load_session_data(args.input)
+    # Load session data with metadata
+    timestamps, accel_data, gyro_data, metadata = load_session_data(args.input)
     
     session_info = {
         'filename': os.path.basename(args.input),
         'duration': timestamps[-1],
         'samples': len(timestamps),
-        'fs': len(timestamps) / timestamps[-1]
+        'fs': len(timestamps) / timestamps[-1],
+        'metadata': metadata
     }
     
     # Initialize detector
@@ -1328,6 +1422,37 @@ def main():
     print(f"Session duration: {timestamps[-1]:.1f} seconds")
     print(f"Event rate: {len(detected_events) / (timestamps[-1] / 60.0):.1f} events/minute")
     
+    # Calculate validation metrics if expected count is available
+    validation_metrics = {}
+    if 'actualPinchCount' in metadata:
+        expected_count = metadata['actualPinchCount']
+        detected_count = len(detected_events)
+        
+        validation_metrics = {
+            'expected_count': expected_count,
+            'detected_count': detected_count,
+            'accuracy_rate': detected_count / max(1, expected_count),
+            'absolute_error': abs(detected_count - expected_count),
+            'relative_error': abs(detected_count - expected_count) / max(1, expected_count),
+            'detection_precision': min(1.0, expected_count / max(1, detected_count)) if detected_count > 0 else 0.0,
+            'detection_recall': min(1.0, detected_count / max(1, expected_count))
+        }
+        
+        print(f"\n=== VALIDATION RESULTS ===")
+        print(f"Expected pinch count: {expected_count}")
+        print(f"Detected pinch count: {detected_count}")
+        print(f"Absolute error: {validation_metrics['absolute_error']}")
+        print(f"Relative error: {validation_metrics['relative_error']:.1%}")
+        print(f"Detection recall: {validation_metrics['detection_recall']:.1%}")
+        print(f"Detection precision: {validation_metrics['detection_precision']:.1%}")
+        
+        if detected_count == expected_count:
+            print("✓ Perfect match!")
+        elif detected_count > expected_count:
+            print(f"⚠️  Over-detection: {detected_count - expected_count} extra events")
+        else:
+            print(f"⚠️  Under-detection: {expected_count - detected_count} missed events")
+    
     if len(detected_events) > 0:
         confidences = [e['confidence'] for e in detected_events]
         print(f"Average confidence: {np.mean(confidences):.3f}")
@@ -1341,7 +1466,8 @@ def main():
     # Generate HTML report
     print(f"\nGenerating HTML report...")
     html_path = generate_html_report(detector, session_info, output_dir, 
-                                     time_range=args.time_range, y_range=args.y_range)
+                                     time_range=args.time_range, y_range=args.y_range, 
+                                     validation_metrics=validation_metrics)
     
     # Save detailed results
     results = {
@@ -1350,7 +1476,8 @@ def main():
         'template_count': len(detector.template_verifier.templates),
         'detected_events': detected_events,
         'gate_triggers': int(np.sum(detector.debug_data['gate_triggers'])),
-        'verification_rate': len(detected_events) / max(1, np.sum(detector.debug_data['gate_triggers']))
+        'verification_rate': len(detected_events) / max(1, np.sum(detector.debug_data['gate_triggers'])),
+        'validation_metrics': validation_metrics
     }
     
     with open(os.path.join(output_dir, 'results.json'), 'w') as f:

@@ -21,6 +21,28 @@ struct SensorReading: Codable {
     }
 }
 
+// Motion interruption event for tracking sensor stream breaks
+struct MotionInterruption: Codable {
+    let timestamp: Date
+    let motionTimestamp: Double
+    let epochTimestamp: Double
+    let interruptionType: InterruptionType
+    let duration: Double // Duration of interruption in seconds
+    let reason: String
+    
+    enum InterruptionType: String, Codable {
+        case streamPaused = "STREAM_PAUSED"
+        case sensorTimeout = "SENSOR_TIMEOUT"  
+        case motionError = "MOTION_ERROR"
+        case streamResumed = "STREAM_RESUMED"
+    }
+    
+    // CSV format for interruption events
+    func csvRow() -> String {
+        return "# MOTION_INTERRUPTION,\(String(format: "%.6f", motionTimestamp)),\(String(format: "%.6f", epochTimestamp)),\(interruptionType.rawValue),\(String(format: "%.3f", duration)),\(reason)"
+    }
+}
+
 extension SensorReading {
     var accelerationMagnitude: Double {
         return sqrt(userAcceleration.x * userAcceleration.x + 

@@ -129,8 +129,63 @@ class PhoneSessionManager: NSObject, ObservableObject {
         }
     }
     
+    func updateSessionNotes(sessionId: String, notes: String?) {
+        addDebugMessage("📝 Updating notes for session \(sessionId.prefix(8)): '\(notes?.prefix(50) ?? "nil")'")
+        
+        // First, find and update the session in the receivedSessions array
+        if let index = receivedSessions.firstIndex(where: { $0.id.uuidString == sessionId }) {
+            let currentSession = receivedSessions[index]
+            let updatedSession = DhikrSession.createWithId(
+                id: currentSession.id,
+                startTime: currentSession.startTime,
+                endTime: currentSession.endTime ?? currentSession.startTime,
+                totalPinches: currentSession.totalPinches,
+                detectedPinches: currentSession.detectedPinches,
+                manualCorrections: currentSession.manualCorrections,
+                sessionDuration: currentSession.sessionDuration,
+                notes: notes,
+                actualPinchCount: currentSession.actualPinchCount
+            )
+            receivedSessions[index] = updatedSession
+            
+            // Load sensor data and detection events if available
+            let sensorData = getSensorData(for: sessionId) ?? []
+            let detectionEvents = getDetectionEvents(for: sessionId) ?? []
+            
+            // Save the updated session to disk
+            saveSession(updatedSession, sensorData: sensorData, detectionEvents: detectionEvents)
+            
+            addDebugMessage("✅ Successfully updated notes for session \(sessionId.prefix(8))")
+        } else {
+            addDebugMessage("⚠️ Session not found: \(sessionId.prefix(8))")
+        }
+    }
+    
     func getDetectionEventCount(for sessionId: String) -> Int {
         return storedMetadata[sessionId]?.detectionEventCount ?? 0
+    }
+    
+    func getMotionInterruptionCount(for sessionId: String) -> Int {
+        // Load from file to check motion interruptions
+        let fileName = "session_\(sessionId).json"
+        let fileURL = sessionsDirectory.appendingPathComponent(fileName)
+        
+        if let persistedData = loadPersistedSessionData(from: fileURL), let interruptions = persistedData.motionInterruptions {
+            return interruptions.count
+        }
+        
+        return 0
+    }
+    
+    private func loadPersistedSessionData(from fileURL: URL) -> PersistedSessionData? {
+        do {
+            let data = try Data(contentsOf: fileURL)
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return try decoder.decode(PersistedSessionData.self, from: data)
+        } catch {
+            return nil
+        }
     }
     
     private override init() {
@@ -402,11 +457,12 @@ class PhoneSessionManager: NSObject, ObservableObject {
         }
     }
     
-    private func saveSession(_ session: DhikrSession, sensorData: [SensorReading], detectionEvents: [DetectionEvent]) {
+    private func saveSession(_ session: DhikrSession, sensorData: [SensorReading], detectionEvents: [DetectionEvent], motionInterruptions: [MotionInterruption] = []) {
         addDebugMessage("💾 SAVING SESSION:")
         addDebugMessage("   • ID: \(session.id.uuidString.prefix(8))")
         addDebugMessage("   • Sensor readings: \(sensorData.count)")
         addDebugMessage("   • Detection events: \(detectionEvents.count)")
+        addDebugMessage("   • Motion interruptions: \(motionInterruptions.count)")
         addDebugMessage("   • Duration: \(String(format: "%.1fs", session.sessionDuration))")
         
         let sessionData = PersistedSessionData(
@@ -417,10 +473,11 @@ class PhoneSessionManager: NSObject, ObservableObject {
             totalPinches: session.totalPinches,
             detectedPinches: session.detectedPinches,
             manualCorrections: session.manualCorrections,
-            notes: nil,
+            notes: session.sessionNotes,
             actualPinchCount: session.actualPinchCount,
             sensorData: sensorData,
-            detectionEvents: detectionEvents
+            detectionEvents: detectionEvents,
+            motionInterruptions: motionInterruptions.isEmpty ? nil : motionInterruptions
         )
         
         let fileName = "session_\(session.id.uuidString).json"
@@ -724,8 +781,9 @@ extension PhoneSessionManager: @preconcurrency WCSessionDelegate {
                     self.isReceivingFile = false
                     self.fileTransferProgress = ""
                     
-                    // Save session to disk
-                    self.saveSession(session, sensorData: sessionData.sensorData, detectionEvents: sessionData.detectionEvents)
+                    // Save session to disk  
+                    let motionInterruptions = sessionData.motionInterruptions ?? []
+                    self.saveSession(session, sensorData: sessionData.sensorData, detectionEvents: sessionData.detectionEvents, motionInterruptions: motionInterruptions)
                     
                     let successMessage = "✅ Successfully processed file: \(sessionData.sensorData.count) sensor readings, \(sessionData.detectionEvents.count) events"
                     self.addDebugMessage(successMessage)
@@ -834,7 +892,8 @@ extension PhoneSessionManager: @preconcurrency WCSessionDelegate {
             sessionId: sessionId,
             timestamp: Date().timeIntervalSince1970,
             sensorData: sensorReadings,
-            detectionEvents: [] // CSV format doesn't include detection events separately
+            detectionEvents: [], // CSV format doesn't include detection events separately
+            motionInterruptions: [] // CSV format doesn't parse motion interruptions separately
         )
     }
 }
@@ -846,6 +905,7 @@ private struct SessionData: Codable {
     let timestamp: TimeInterval
     let sensorData: [SensorReading]
     let detectionEvents: [DetectionEvent]
+    let motionInterruptions: [MotionInterruption]?
 }
 
 // Lightweight metadata for fast startup loading
@@ -888,6 +948,7 @@ private struct PersistedSessionData: Codable {
     let actualPinchCount: Int?
     let sensorData: [SensorReading]
     let detectionEvents: [DetectionEvent]
+    let motionInterruptions: [MotionInterruption]?
     
     func toDhikrSession() -> DhikrSession {
         return DhikrSession.createWithId(

@@ -54,6 +54,7 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
     private var sessionStartTime: Date?
     private var sensorDataLog: [SensorReading] = []
     private var detectionEventLog: [DetectionEvent] = []
+    private var motionInterruptionLog: [MotionInterruption] = []
     private var currentSessionId: UUID?
     private let dataLogQueue = DispatchQueue(label: "com.dhikrcounter.datalog", qos: .userInitiated)
     
@@ -67,6 +68,11 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
     private var lastDataTimestamp: Date = Date()
     private var sessionTimeoutTimer: DispatchSourceTimer?
     private let sessionTimeoutInterval: TimeInterval = 3.0 // Alert if no data for 3 seconds
+    
+    // Motion interruption tracking
+    private var motionInterruptionStartTime: Date?
+    private var lastMotionUpdateTime: Date = Date()
+    private let motionTimeoutThreshold: TimeInterval = 1.0 // Consider interrupted if no updates for 1 second
     
     // Real-time session timer
     private var sessionTimer: Timer?
@@ -264,8 +270,28 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
     private func collectRawSensorData(_ motion: CMDeviceMotion) {
         let currentTime = Date()
         
-        // Update last data timestamp for monitoring
+        // Check for motion stream interruption
+        let timeSinceLastMotion = currentTime.timeIntervalSince(lastMotionUpdateTime)
+        
+        if timeSinceLastMotion > motionTimeoutThreshold {
+            // We had an interruption - log it
+            if let interruptionStart = motionInterruptionStartTime {
+                let interruptionDuration = currentTime.timeIntervalSince(interruptionStart)
+                logMotionInterruption(
+                    timestamp: currentTime,
+                    motionTimestamp: motion.timestamp,
+                    type: .streamResumed,
+                    duration: interruptionDuration,
+                    reason: "Motion stream resumed after \(String(format: "%.1f", interruptionDuration))s gap"
+                )
+                motionInterruptionStartTime = nil
+                print("🔄 Motion stream resumed after \(String(format: "%.1f", interruptionDuration))s interruption")
+            }
+        }
+        
+        // Update timestamps
         lastDataTimestamp = currentTime
+        lastMotionUpdateTime = currentTime
         
         // High-res relative time (s since boot) - as per guide requirements
         let motionTimestamp = motion.timestamp
@@ -574,6 +600,25 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
         detectionEventLog.append(event)
     }
     
+    private func logMotionInterruption(timestamp: Date, motionTimestamp: Double, type: MotionInterruption.InterruptionType, duration: Double, reason: String) {
+        let epochTimestamp = startEpoch + motionTimestamp
+        
+        let interruption = MotionInterruption(
+            timestamp: timestamp,
+            motionTimestamp: motionTimestamp,
+            epochTimestamp: epochTimestamp,
+            interruptionType: type,
+            duration: duration,
+            reason: reason
+        )
+        
+        dataLogQueue.async { [weak self] in
+            self?.motionInterruptionLog.append(interruption)
+        }
+        
+        print("📝 Logged motion interruption: \(type.rawValue) - \(reason)")
+    }
+    
     // MARK: - Data Transfer to iPhone
     
     private func transferSessionDataToPhone(sessionId: UUID, completion: @escaping (Bool) -> Void) {
@@ -588,12 +633,14 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
             // Create safe copies of data on background queue
             let sensorDataCopy = Array(self.sensorDataLog)
             let detectionEventsCopy = Array(self.detectionEventLog)
+            let motionInterruptionsCopy = Array(self.motionInterruptionLog)
             
             DispatchQueue.main.async {
                 Task { @MainActor in
                     self.sessionManager.transferSensorData(
                         sensorData: sensorDataCopy,
                         detectionEvents: detectionEventsCopy,
+                        motionInterruptions: motionInterruptionsCopy,
                         sessionId: sessionId
                     )
                     
@@ -637,8 +684,8 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
     }
     
     // Export function for companion app
-    func exportSessionData() -> (sensorData: [SensorReading], detectionEvents: [DetectionEvent]) {
-        return (sensorDataLog, detectionEventLog)
+    func exportSessionData() -> (sensorData: [SensorReading], detectionEvents: [DetectionEvent], motionInterruptions: [MotionInterruption]) {
+        return (sensorDataLog, detectionEventLog, motionInterruptionLog)
     }
     
     // Export sensor data as CSV string (compatible with guide format)
@@ -646,16 +693,38 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
         guard !sensorDataLog.isEmpty else { return "" }
         
         var csvContent = SensorReading.csvHeader + "\n"
+        
+        // Merge sensor data and motion interruptions by timestamp for chronological order
+        var allEvents: [(timestamp: Double, content: String)] = []
+        
+        // Add sensor readings
         for reading in sensorDataLog {
-            csvContent += reading.csvRow() + "\n"
+            allEvents.append((timestamp: reading.motionTimestamp, content: reading.csvRow()))
         }
+        
+        // Add motion interruptions as CSV comments
+        for interruption in motionInterruptionLog {
+            allEvents.append((timestamp: interruption.motionTimestamp, content: interruption.csvRow()))
+        }
+        
+        // Sort by timestamp and build final CSV
+        allEvents.sort { $0.timestamp < $1.timestamp }
+        for event in allEvents {
+            csvContent += event.content + "\n"
+        }
+        
         return csvContent
     }
     
     func clearLogs() {
         sensorDataLog.removeAll(keepingCapacity: false)
         detectionEventLog.removeAll(keepingCapacity: false)
+        motionInterruptionLog.removeAll(keepingCapacity: false)
         sampleCount = 0  // Reset thread-safe sample counter
+        
+        // Reset interruption tracking
+        motionInterruptionStartTime = nil
+        lastMotionUpdateTime = Date()
         
         // Also clear buffers to free memory
         accelerationBuffer.removeAll(keepingCapacity: false)
@@ -866,9 +935,23 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
     }
     
     private func checkSessionTimeout() {
-        let timeSinceLastData = Date().timeIntervalSince(lastDataTimestamp)
+        let currentTime = Date()
+        let timeSinceLastData = currentTime.timeIntervalSince(lastDataTimestamp)
         
         if timeSinceLastData > sessionTimeoutInterval && sessionState != .inactive {
+            // Log the interruption if we haven't already
+            if motionInterruptionStartTime == nil {
+                motionInterruptionStartTime = lastDataTimestamp
+                logMotionInterruption(
+                    timestamp: currentTime,
+                    motionTimestamp: 0, // We don't have motion timestamp during timeout
+                    type: .sensorTimeout,
+                    duration: timeSinceLastData,
+                    reason: "No sensor data for \(String(format: "%.1f", timeSinceLastData))s - restarting motion manager"
+                )
+                print("⚠️ MOTION INTERRUPTION: No sensor data for \(String(format: "%.1f", timeSinceLastData))s")
+            }
+            
             print("⚠️ WARNING: No sensor data received for \(String(format: "%.1f", timeSinceLastData)) seconds!")
             print("   Session may have been suspended by watchOS")
             print("   Expected data every 0.02s (50Hz), last data: \(lastDataTimestamp)")
@@ -876,8 +959,6 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
             // Restart motion updates - this is often the solution when stream stops
             print("🔄 Restarting motion updates...")
             restartMotionManager()
-            
-            // Extended runtime session removed - relying solely on workout session for background execution
         }
     }
     
