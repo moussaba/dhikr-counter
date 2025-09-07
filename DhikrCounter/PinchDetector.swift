@@ -177,9 +177,14 @@ public final class PinchDetector {
     }
     
     public static func convertSensorReadings(_ readings: [SensorReading]) -> [SensorFrame] {
+        guard !readings.isEmpty else { return [] }
+        
+        // Use relative time from session start (motionTimestamp is already relative to first reading)
+        let startTime = readings.first!.motionTimestamp
+        
         return readings.map { reading in
             SensorFrame(
-                t: reading.epochTimestamp,
+                t: reading.motionTimestamp - startTime,  // Convert to relative time from session start
                 ax: Float(reading.userAcceleration[0]),
                 ay: Float(reading.userAcceleration[1]),
                 az: Float(reading.userAcceleration[2]),

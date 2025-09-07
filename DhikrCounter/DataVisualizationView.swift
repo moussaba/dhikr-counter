@@ -2195,9 +2195,17 @@ struct TKEOAnalysisPlotView: View {
     let sensorData: [SensorReading]
     let session: DhikrSession?
     let detectedEvents: [PinchEvent]
+    let isFullScreen: Bool
     
     @State private var selectedPlotType: TKEOPlotType = .combinedOverview
     @State private var showingFullScreenChart = false
+    
+    init(sensorData: [SensorReading], session: DhikrSession?, detectedEvents: [PinchEvent], isFullScreen: Bool = false) {
+        self.sensorData = sensorData
+        self.session = session
+        self.detectedEvents = detectedEvents
+        self.isFullScreen = isFullScreen
+    }
     
     enum TKEOPlotType: String, CaseIterable {
         case combinedOverview = "Combined Overview"
@@ -2250,13 +2258,18 @@ struct TKEOAnalysisPlotView: View {
             
             // Main chart
             chartView
-                .frame(height: 200)
+                .frame(height: isFullScreen ? .infinity : 200)
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    showingFullScreenChart = true
+                    if !isFullScreen {
+                        showingFullScreenChart = true
+                    }
                 }
                 .background(Color(.systemGray6))
                 .cornerRadius(12)
+            
+            // Legend
+            legendView
             
             // Detection summary
             detectionSummaryView
@@ -2265,12 +2278,14 @@ struct TKEOAnalysisPlotView: View {
         .background(Color(.systemBackground))
         .cornerRadius(16)
         .sheet(isPresented: $showingFullScreenChart) {
-            TKEOFullScreenChartView(
-                sensorData: sensorData,
-                session: session,
-                detectedEvents: detectedEvents,
-                plotType: selectedPlotType
-            )
+            if !isFullScreen {
+                TKEOFullScreenChartView(
+                    sensorData: sensorData,
+                    session: session,
+                    detectedEvents: detectedEvents,
+                    plotType: selectedPlotType
+                )
+            }
         }
     }
     
@@ -2281,6 +2296,7 @@ struct TKEOAnalysisPlotView: View {
             Chart {
                 combinedOverviewChart
             }
+            .chartXScale(domain: 0...sessionDuration)
             .chartXAxis {
                 AxisMarks(position: .bottom) { value in
                     AxisValueLabel {
@@ -2307,6 +2323,7 @@ struct TKEOAnalysisPlotView: View {
             Chart {
                 bandpassFilteredChart
             }
+            .chartXScale(domain: 0...sessionDuration)
             .chartXAxis {
                 AxisMarks(position: .bottom) { value in
                     AxisValueLabel {
@@ -2333,6 +2350,7 @@ struct TKEOAnalysisPlotView: View {
             Chart {
                 jerkSignalsChart
             }
+            .chartXScale(domain: 0...sessionDuration)
             .chartXAxis {
                 AxisMarks(position: .bottom) { value in
                     AxisValueLabel {
@@ -2359,6 +2377,7 @@ struct TKEOAnalysisPlotView: View {
             Chart {
                 tkeoSignalsChart
             }
+            .chartXScale(domain: 0...sessionDuration)
             .chartXAxis {
                 AxisMarks(position: .bottom) { value in
                     AxisValueLabel {
@@ -2385,6 +2404,7 @@ struct TKEOAnalysisPlotView: View {
             Chart {
                 fusionScoreChart
             }
+            .chartXScale(domain: 0...sessionDuration)
             .chartXAxis {
                 AxisMarks(position: .bottom) { value in
                     AxisValueLabel {
@@ -2407,6 +2427,84 @@ struct TKEOAnalysisPlotView: View {
                     AxisGridLine()
                 }
             }
+        }
+    }
+    
+    @ViewBuilder
+    private var legendView: some View {
+        switch selectedPlotType {
+        case .combinedOverview:
+            VStack(spacing: 6) {
+                HStack(spacing: 16) {
+                    LegendItem(color: .blue, symbol: nil, label: "Accel Magnitude")
+                    LegendItem(color: .orange, symbol: nil, label: "Gyro Magnitude")
+                }
+                HStack(spacing: 16) {
+                    LegendItem(color: .green, symbol: "line.diagonal", label: "Gate Events")
+                    LegendItem(color: .purple, symbol: "diamond", label: "Template Verified")
+                }
+            }
+            .font(.caption)
+            .padding(.vertical, 8)
+            .padding(.horizontal, 12)
+            .background(Color(.systemGray6).opacity(0.5))
+            .cornerRadius(8)
+            
+        case .bandpassFiltered:
+            HStack(spacing: 16) {
+                LegendItem(color: .blue, symbol: nil, label: "Filtered Accel")
+                LegendItem(color: .orange, symbol: nil, label: "Filtered Gyro")
+            }
+            .font(.caption)
+            .padding(.vertical, 8)
+            .padding(.horizontal, 12)
+            .background(Color(.systemGray6).opacity(0.5))
+            .cornerRadius(8)
+            
+        case .jerkSignals:
+            HStack(spacing: 16) {
+                LegendItem(color: .blue, symbol: nil, label: "Accel Jerk")
+                LegendItem(color: .orange, symbol: nil, label: "Gyro Jerk")
+            }
+            .font(.caption)
+            .padding(.vertical, 8)
+            .padding(.horizontal, 12)
+            .background(Color(.systemGray6).opacity(0.5))
+            .cornerRadius(8)
+            
+        case .tkeoSignals:
+            VStack(spacing: 6) {
+                HStack(spacing: 16) {
+                    LegendItem(color: .blue, symbol: nil, label: "Accel TKEO")
+                    LegendItem(color: .orange, symbol: nil, label: "Gyro TKEO")
+                }
+                HStack(spacing: 16) {
+                    LegendItem(color: .red, symbol: nil, label: "Accel Threshold")
+                    LegendItem(color: .green, symbol: "line.diagonal", label: "Gate Events")
+                }
+            }
+            .font(.caption)
+            .padding(.vertical, 8)
+            .padding(.horizontal, 12)
+            .background(Color(.systemGray6).opacity(0.5))
+            .cornerRadius(8)
+            
+        case .fusionScore:
+            VStack(spacing: 6) {
+                HStack(spacing: 16) {
+                    LegendItem(color: .purple, symbol: nil, label: "Fusion Score")
+                    LegendItem(color: .cyan, symbol: nil, label: "Template NCC Score")
+                }
+                HStack(spacing: 16) {
+                    LegendItem(color: .red, symbol: nil, label: "NCC Threshold")
+                    LegendItem(color: .green, symbol: "diamond", label: "Template Verified")
+                }
+            }
+            .font(.caption)
+            .padding(.vertical, 8)
+            .padding(.horizontal, 12)
+            .background(Color(.systemGray6).opacity(0.5))
+            .cornerRadius(8)
         }
     }
     
@@ -2630,6 +2728,13 @@ struct TKEOAnalysisPlotView: View {
     
     // MARK: - Data Processing
     
+    private var sessionDuration: Double {
+        guard !sensorData.isEmpty else { return 10.0 } // Default fallback
+        let startTime = sensorData.first!.motionTimestamp
+        let endTime = sensorData.last!.motionTimestamp
+        return max(1.0, endTime - startTime) // Ensure minimum 1 second
+    }
+    
     private var accelMagnitudeData: [(time: Double, value: Double)] {
         guard !sensorData.isEmpty else { return [] }
         let startTime = sensorData.first!.motionTimestamp
@@ -2792,7 +2897,8 @@ struct TKEOFullScreenChartView: View {
                 TKEOAnalysisPlotView(
                     sensorData: sensorData,
                     session: session,
-                    detectedEvents: detectedEvents
+                    detectedEvents: detectedEvents,
+                    isFullScreen: true
                 )
                 .frame(maxHeight: .infinity)
                 .padding(.horizontal)
@@ -2831,6 +2937,32 @@ struct TKEOFullScreenChartView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
             isExporting = false
             // Would implement actual chart export here
+        }
+    }
+}
+
+// MARK: - Legend Helper View
+
+struct LegendItem: View {
+    let color: Color
+    let symbol: String?
+    let label: String
+    
+    var body: some View {
+        HStack(spacing: 4) {
+            if let symbol = symbol {
+                Image(systemName: symbol)
+                    .foregroundColor(color)
+                    .font(.caption2)
+            } else {
+                Rectangle()
+                    .fill(color)
+                    .frame(width: 12, height: 2)
+            }
+            
+            Text(label)
+                .font(.caption2)
+                .foregroundColor(.primary)
         }
     }
 }
