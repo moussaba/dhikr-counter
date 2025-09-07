@@ -31,6 +31,8 @@
 		D11E1A0C9DFFB780BC229F9C /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 19B28EBF61C67C7579DB4D07 /* SwiftUI.framework */; };
 		F505F6572E66C792003714BE /* WatchSessionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F505F6562E66C792003714BE /* WatchSessionManager.swift */; };
 		F505F6592E66C7A2003714BE /* PhoneSessionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F505F6582E66C7A2003714BE /* PhoneSessionManager.swift */; };
+		F531EB3C2E6D23CD00CCD0B6 /* trained_templates.json in Resources */ = {isa = PBXBuildFile; fileRef = F531EB3B2E6D23CD00CCD0B6 /* trained_templates.json */; };
+		F531EB422E6D795400CCD0B6 /* PinchDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = F531EB412E6D795400CCD0B6 /* PinchDetector.swift */; };
 		F5991E902E66F499006885C5 /* DhikrCounter Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 31683209E7C5139A132FBBC6 /* DhikrCounter Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		FAAC33ABD9E9A7C22A589960 /* WatchKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B42F69224B2415F36C1294F4 /* WatchKit.framework */; };
 /* End PBXBuildFile section */
@@ -107,6 +109,8 @@
 		F505F6562E66C792003714BE /* WatchSessionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchSessionManager.swift; sourceTree = "<group>"; };
 		F505F6582E66C7A2003714BE /* PhoneSessionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneSessionManager.swift; sourceTree = "<group>"; };
 		F531EB3A2E6CAB3500CCD0B6 /* DhikrCounter Watch App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "DhikrCounter Watch App.entitlements"; sourceTree = "<group>"; };
+		F531EB3B2E6D23CD00CCD0B6 /* trained_templates.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = trained_templates.json; sourceTree = "<group>"; };
+		F531EB412E6D795400CCD0B6 /* PinchDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinchDetector.swift; sourceTree = "<group>"; };
 		F657C64E8290259D316B999E /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
 		FEDA213EFCDD446253B7B013 /* DataVisualizationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataVisualizationView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -143,6 +147,7 @@
 		4AF01F2022C84C1A067DE418 /* DhikrCounter */ = {
 			isa = PBXGroup;
 			children = (
+				F531EB412E6D795400CCD0B6 /* PinchDetector.swift */,
 				F505F6582E66C7A2003714BE /* PhoneSessionManager.swift */,
 				93456EC972708BE419D20ECF /* Assets.xcassets */,
 				C740095B6C0FC7671A15F035 /* CompanionContentView.swift */,
@@ -203,6 +208,7 @@
 		D09FF684E627CC4332102D82 = {
 			isa = PBXGroup;
 			children = (
+				F531EB3B2E6D23CD00CCD0B6 /* trained_templates.json */,
 				4AF01F2022C84C1A067DE418 /* DhikrCounter */,
 				8EC7B9FF2761149C94C0E39F /* DhikrCounter Watch App */,
 				7E61FEC58BB7086F89F6C413 /* Shared */,
@@ -301,6 +307,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				7AEA6899E904E6C8DABC8B4F /* Assets.xcassets in Resources */,
+				F531EB3C2E6D23CD00CCD0B6 /* trained_templates.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -313,6 +320,7 @@
 			files = (
 				AD35DC2FC6852F771701A144 /* CompanionContentView.swift in Sources */,
 				6BC47273E49B7D5E32BC94F0 /* DataVisualizationView.swift in Sources */,
+				F531EB422E6D795400CCD0B6 /* PinchDetector.swift in Sources */,
 				8B4DCF8588BB17059A74B1E5 /* DetectionEvent.swift in Sources */,
 				05F5AF870A839A38B9E93944 /* DhikrCounterCompanionApp.swift in Sources */,
 				5E9CAF645B9CD229BEBA4B60 /* DhikrSession.swift in Sources */,

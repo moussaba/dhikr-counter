@@ -465,6 +465,48 @@ class AdvancedPinchDetector:
         # Create fusion score using configured method
         fusion_score = self._compute_fusion_score(accel_tkeo, gyro_tkeo)
         
+        # Debug output to match Swift implementation
+        print(f"🔬 TKEO DEBUG: 📊 Processing {len(accel_data)} frames")
+        accel_raw_mean = np.mean(np.linalg.norm(accel_data, axis=1))
+        accel_raw_max = np.max(np.linalg.norm(accel_data, axis=1))
+        gyro_raw_mean = np.mean(np.linalg.norm(gyro_data, axis=1))
+        gyro_raw_max = np.max(np.linalg.norm(gyro_data, axis=1))
+        
+        print(f"🔬 TKEO DEBUG: 🏃 Accel: mean={accel_raw_mean:.3f}, max={accel_raw_max:.3f} m/s²")
+        print(f"🔬 TKEO DEBUG: 🌀 Gyro: mean={gyro_raw_mean:.3f}, max={gyro_raw_max:.3f} rad/s")
+        
+        valid_accel_tkeo = accel_tkeo[np.isfinite(accel_tkeo)]
+        valid_gyro_tkeo = gyro_tkeo[np.isfinite(gyro_tkeo)]
+        
+        accel_tkeo_mean = np.mean(valid_accel_tkeo) if len(valid_accel_tkeo) > 0 else 0.0
+        accel_tkeo_max = np.max(valid_accel_tkeo) if len(valid_accel_tkeo) > 0 else 0.0
+        gyro_tkeo_mean = np.mean(valid_gyro_tkeo) if len(valid_gyro_tkeo) > 0 else 0.0
+        gyro_tkeo_max = np.max(valid_gyro_tkeo) if len(valid_gyro_tkeo) > 0 else 0.0
+        
+        print(f"🔬 TKEO DEBUG: ⚡ Accel TKEO: mean={accel_tkeo_mean:.3f}, max={accel_tkeo_max:.3f} (valid: {len(valid_accel_tkeo)}/{len(accel_tkeo)})")
+        print(f"🔬 TKEO DEBUG: 🌪️ Gyro TKEO: mean={gyro_tkeo_mean:.3f}, max={gyro_tkeo_max:.3f} (valid: {len(valid_gyro_tkeo)}/{len(gyro_tkeo)})")
+        
+        # Global median statistics
+        accel_median_global = np.median(valid_accel_tkeo) if len(valid_accel_tkeo) > 0 else 0.0
+        gyro_median_global = np.median(valid_gyro_tkeo) if len(valid_gyro_tkeo) > 0 else 0.0
+        
+        print(f"🔬 TKEO DEBUG: 📊 Global Reference - Accel median: {accel_median_global:.3f} (valid: {len(valid_accel_tkeo)}/{len(accel_tkeo)})")
+        print(f"🔬 TKEO DEBUG: 📊 Global Reference - Gyro median: {gyro_median_global:.3f} (valid: {len(valid_gyro_tkeo)}/{len(gyro_tkeo)})")
+        
+        # Additional debug: count zeros and near-zeros like GPT-5 suggested
+        zero_count_accel = np.sum(valid_accel_tkeo == 0)
+        near_zero_count_accel = np.sum(np.abs(valid_accel_tkeo) < 1e-6)
+        nonzero_accel = valid_accel_tkeo[valid_accel_tkeo != 0]
+        mean_nonzero_accel = np.mean(nonzero_accel) if len(nonzero_accel) > 0 else 0.0
+        
+        zero_count_gyro = np.sum(valid_gyro_tkeo == 0)
+        near_zero_count_gyro = np.sum(np.abs(valid_gyro_tkeo) < 1e-6)
+        nonzero_gyro = valid_gyro_tkeo[valid_gyro_tkeo != 0]
+        mean_nonzero_gyro = np.mean(nonzero_gyro) if len(nonzero_gyro) > 0 else 0.0
+        
+        print(f"🔬 TKEO DEBUG: 🔍 Accel TKEO zeros: {zero_count_accel}, near-zeros: {near_zero_count_accel}, non-zero mean: {mean_nonzero_accel:.3f}")
+        print(f"🔬 TKEO DEBUG: 🔍 Gyro TKEO zeros: {zero_count_gyro}, near-zeros: {near_zero_count_gyro}, non-zero mean: {mean_nonzero_gyro:.3f}")
+        
         # Process sample by sample for baseline tracking and detection
         print("Processing samples for detection...")
         detected_events = []

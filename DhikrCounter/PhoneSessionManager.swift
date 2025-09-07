@@ -28,6 +28,30 @@ class PhoneSessionManager: NSObject, ObservableObject {
         return documentsURL
     }
     
+    // Copy trained template from bundle to Documents directory (development helper)
+    func copyTrainedTemplateIfNeeded() {
+        let documentsTemplate = sessionsDirectory.appendingPathComponent("trained_templates.json")
+        
+        // If already exists in Documents, don't overwrite
+        if FileManager.default.fileExists(atPath: documentsTemplate.path) {
+            print("✓ Trained template already exists in Documents directory")
+            return
+        }
+        
+        // Try to find template in bundle
+        guard let bundleTemplate = Bundle.main.url(forResource: "trained_templates", withExtension: "json") else {
+            print("ℹ️ No trained template found in app bundle")
+            return
+        }
+        
+        do {
+            try FileManager.default.copyItem(at: bundleTemplate, to: documentsTemplate)
+            print("✅ Copied trained template to Documents: \(documentsTemplate.path)")
+        } catch {
+            print("⚠️ Failed to copy trained template: \(error)")
+        }
+    }
+    
     // Public accessors for UI
     func getSensorData(for sessionId: String) -> [SensorReading]? {
         // If already in memory, return it
@@ -246,7 +270,7 @@ class PhoneSessionManager: NSObject, ObservableObject {
             try FileManager.default.createDirectory(at: sessionsDirectory, withIntermediateDirectories: true)
             
             // Create a readme file to make the app visible in Files app
-            let readmeURL = sessionsDirectory.appendingPathComponent("DhikrSessions_README.txt")
+            let readmeURL = sessionsDirectory.appendingPathComponent("DhikrCounter_README.txt")
             if !FileManager.default.fileExists(atPath: readmeURL.path) {
                 let readmeContent = """
                 Dhikr Counter Session Files
