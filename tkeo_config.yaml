@@ -4,7 +4,7 @@
 
 tkeo_params:
   # Sampling and filtering
-  fs: 100  # Sampling frequency (Hz) - validated against actual data
+  fs: 50  # Sampling frequency (Hz) - validated against actual data
   bandpass_low: 3.0  # Low cutoff frequency (Hz) - targets pinch range  
   bandpass_high: 20.0  # High cutoff frequency (Hz) - captures transient energy
   
@@ -24,11 +24,11 @@ tkeo_params:
   
   # Template verification with lag search
   template_length: 16  # Template window length (samples) ~160ms at 100Hz
-  template_confidence: 0.65  # NCC threshold for verification
+  template_confidence: 0.40  # NCC threshold for verification
   # Note: Lag search (±3 samples) now automatic for timing jitter tolerance
   
   # Event constraints
-  refractory_period_s: 0.300  # Minimum time between detections (seconds)
+  refractory_period_s: 0.400  # Minimum time between detections (seconds)
   verification_window_s: 0.16  # Template verification window (seconds)
 
 # Recent Improvements:

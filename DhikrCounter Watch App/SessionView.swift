@@ -186,11 +186,12 @@ struct DataExportView: View {
                     .font(.title2)
                     .fontWeight(.semibold)
                 
-                let (sensorData, detectionEvents) = detectionEngine.exportSessionData()
+                let (sensorData, detectionEvents, motionInterruptions) = detectionEngine.exportSessionData()
                 
                 VStack(spacing: 12) {
                     DataSummaryRow(label: "Sensor Readings", count: sensorData.count)
                     DataSummaryRow(label: "Detection Events", count: detectionEvents.count)
+                    DataSummaryRow(label: "Motion Interruptions", count: motionInterruptions.count)
                     DataSummaryRow(label: "Total Pinches", count: detectionEngine.pinchCount)
                 }
                 .padding()

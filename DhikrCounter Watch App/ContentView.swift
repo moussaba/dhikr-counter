@@ -94,11 +94,28 @@ struct DataTransferStatusView: View {
                 Text("Transferring...")
                     .font(.caption2)
                     .foregroundColor(.blue)
+                
+                Spacer()
+                
+                // Show percentage if progress is available
+                if sessionManager.transferProgress > 0 {
+                    Text("\(Int(sessionManager.transferProgress * 100))%")
+                        .font(.caption2)
+                        .foregroundColor(.blue)
+                        .fontWeight(.semibold)
+                }
             }
             
-            ProgressView()
-                .progressViewStyle(LinearProgressViewStyle(tint: .blue))
-                .scaleEffect(y: 1.5)
+            // Show determinate progress bar if we have progress, otherwise indeterminate
+            if sessionManager.transferProgress > 0 {
+                ProgressView(value: sessionManager.transferProgress)
+                    .progressViewStyle(LinearProgressViewStyle(tint: .blue))
+                    .scaleEffect(y: 1.5)
+            } else {
+                ProgressView()
+                    .progressViewStyle(LinearProgressViewStyle(tint: .blue))
+                    .scaleEffect(y: 1.5)
+            }
             
             Text(sessionManager.transferStatus)
                 .font(.caption2)

@@ -441,6 +441,9 @@ struct SessionDetailView: View {
                 if let sensorData = dataManager.getSensorData(for: session.id.uuidString) {
                     SensorDataPreviewCard(sensorData: sensorData, session: session)
                     
+                    // TKEO Detection section
+                    TKEODetectionCard(sessionId: session.id.uuidString)
+                    
                     // Export button
                     Button(action: { showingExportSheet = true }) {
                         HStack {
@@ -465,6 +468,9 @@ struct SessionDetailView: View {
 
 struct SessionOverviewCard: View {
     let session: DhikrSession
+    @ObservedObject private var dataManager = PhoneSessionManager.shared
+    @State private var isEditingNotes = false
+    @State private var notesText: String = ""
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -477,11 +483,57 @@ struct SessionOverviewCard: View {
                 OverviewItem(title: "Start Time", value: DateFormatter.sessionFormatter.string(from: session.startTime))
                 OverviewItem(title: "Duration", value: String(format: "%.1fs", session.sessionDuration))
                 OverviewItem(title: "Status", value: "Completed")
+                
+                // Motion interruption count
+                let interruptionCount = dataManager.getMotionInterruptionCount(for: session.id.uuidString)
+                if interruptionCount > 0 {
+                    OverviewItem(title: "Data Gaps", value: "\(interruptionCount) interruption\(interruptionCount == 1 ? "" : "s")")
+                        .foregroundColor(.orange)
+                }
+            }
+            
+            // Notes section
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Session Notes")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                    
+                    Spacer()
+                    
+                    Button(isEditingNotes ? "Save" : "Edit") {
+                        if isEditingNotes {
+                            // Save notes
+                            dataManager.updateSessionNotes(sessionId: session.id.uuidString, notes: notesText.isEmpty ? nil : notesText)
+                        } else {
+                            // Start editing
+                            notesText = session.sessionNotes ?? ""
+                        }
+                        isEditingNotes.toggle()
+                    }
+                    .font(.caption)
+                    .foregroundColor(.blue)
+                }
+                
+                if isEditingNotes {
+                    TextField("Add notes about this session...", text: $notesText, axis: .vertical)
+                        .textFieldStyle(.roundedBorder)
+                        .lineLimit(3...6)
+                } else {
+                    Text(session.sessionNotes?.isEmpty == false ? session.sessionNotes! : "No notes added")
+                        .font(.caption)
+                        .foregroundColor(session.sessionNotes?.isEmpty == false ? .primary : .secondary)
+                        .italic(session.sessionNotes?.isEmpty != false)
+                        .padding(.vertical, 4)
+                }
             }
         }
         .padding()
         .background(Color(.systemBackground))
         .cornerRadius(16)
+        .onAppear {
+            notesText = session.sessionNotes ?? ""
+        }
     }
 }
 
@@ -1863,6 +1915,255 @@ struct EmptyStateView: View {
                 .padding(.horizontal)
         }
         .padding(40)
+    }
+}
+
+// MARK: - TKEO Detection Card
+
+struct TKEODetectionCard: View {
+    let sessionId: String
+    @ObservedObject private var dataManager = PhoneSessionManager.shared
+    @State private var debugLogs: [String] = []
+    @State private var isRunningDetection = false
+    @State private var detectedPinchCount = 0
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Image(systemName: "waveform.path.ecg")
+                    .foregroundColor(.purple)
+                VStack(alignment: .leading) {
+                    Text("TKEO Pinch Detection")
+                        .font(.headline)
+                        .foregroundColor(.primary)
+                    Text("Advanced signal processing for pinch detection")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+            }
+            
+            // Detection status
+            HStack {
+                if detectedPinchCount > 0 {
+                    Text("\(detectedPinchCount) pinch events detected")
+                        .foregroundColor(.green)
+                        .fontWeight(.medium)
+                } else {
+                    Text("No pinch events detected")
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+                Button("Run Detection") {
+                    runTKEODetection()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isRunningDetection)
+                
+                if isRunningDetection {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                }
+            }
+            
+            // Debug Output Section
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("TKEO Debug Output")
+                        .font(.headline)
+                        .foregroundColor(.purple)
+                    Spacer()
+                    Button("Clear") {
+                        debugLogs.removeAll()
+                    }
+                    .font(.caption)
+                    .buttonStyle(.bordered)
+                    
+                    Button("Copy Debug Log") {
+                        copyDebugLog()
+                    }
+                    .font(.caption)
+                    .buttonStyle(.bordered)
+                    .disabled(debugLogs.isEmpty)
+                }
+                
+                ScrollView {
+                    if debugLogs.isEmpty {
+                        VStack(spacing: 8) {
+                            Text("No debug output yet. Run TKEO analysis to see debug information.")
+                                .foregroundColor(.secondary)
+                                .italic()
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                        }
+                    } else {
+                        VStack(alignment: .leading, spacing: 2) {
+                            ForEach(Array(debugLogs.enumerated()), id: \.offset) { index, log in
+                                Text("\(index + 1). \(log)")
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundColor(.primary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+                    }
+                }
+                .frame(maxHeight: 200)
+                .background(Color(.systemGray6))
+                .cornerRadius(8)
+            }
+        }
+        .padding()
+        .background(Color(.systemBackground))
+        .cornerRadius(16)
+    }
+}
+
+extension TKEODetectionCard {
+    private func runTKEODetection() {
+        guard let sensorData = dataManager.getSensorData(for: sessionId) else {
+            addDebugLog("❌ No sensor data available for session \(sessionId.prefix(8))")
+            return
+        }
+        
+        isRunningDetection = true
+        debugLogs.removeAll()
+        detectedPinchCount = 0  // Reset count when starting new detection
+        addDebugLog("🔍 Starting TKEO analysis for session \(sessionId.prefix(8))")
+        addDebugLog("📊 Sensor data: \(sensorData.count) readings")
+        
+        Task {
+            let startTime = CFAbsoluteTimeGetCurrent()
+            
+            // Read all configuration from settings
+            let sampleRate = UserDefaults.standard.double(forKey: "tkeo_sampleRate")
+            let bandpassLow = UserDefaults.standard.double(forKey: "tkeo_bandpassLow")
+            let bandpassHigh = UserDefaults.standard.double(forKey: "tkeo_bandpassHigh")
+            let gateThreshold = UserDefaults.standard.double(forKey: "tkeo_gateThreshold")
+            let accelWeight = UserDefaults.standard.double(forKey: "tkeo_accelWeight")
+            let gyroWeight = UserDefaults.standard.double(forKey: "tkeo_gyroWeight")
+            let refractoryPeriod = UserDefaults.standard.double(forKey: "tkeo_refractoryPeriod")
+            let templateConfidence = UserDefaults.standard.double(forKey: "tkeo_templateConfidence")
+            
+            // Create fully configured PinchConfig with all settings
+            let config = PinchConfig(
+                fs: Float(sampleRate > 0 ? sampleRate : 50.0),
+                bandpassLow: Float(bandpassLow > 0 ? bandpassLow : 3.0),
+                bandpassHigh: Float(bandpassHigh > 0 ? bandpassHigh : 20.0),
+                accelWeight: Float(accelWeight > 0 ? accelWeight : 1.0),
+                gyroWeight: Float(gyroWeight > 0 ? gyroWeight : 1.5),
+                madWinSec: 3.0,
+                gateK: Float(gateThreshold > 0 ? gateThreshold : 3.5),
+                refractoryMs: Float(refractoryPeriod > 0 ? refractoryPeriod * 1000 : 150),
+                minWidthMs: 60,
+                maxWidthMs: 400,
+                nccThresh: Float(templateConfidence > 0 ? templateConfidence : 0.6),
+                windowPreMs: 150,
+                windowPostMs: 250
+            )
+            
+            // Load all trained templates
+            let templates = PinchDetector.loadTrainedTemplates()
+            let detector = PinchDetector(config: config, templates: templates)
+            
+            await MainActor.run {
+                self.addDebugLog("📋 Loaded \(templates.count) templates from JSON file")
+                if templates.count > 0 {
+                    self.addDebugLog("   Template lengths: \(templates.map { $0.data.count })")
+                }
+            }
+            
+            await MainActor.run {
+                self.addDebugLog("⚙️ Configuration from settings:")
+                self.addDebugLog("   Sample rate: \(config.fs) Hz")
+                self.addDebugLog("   Bandpass: \(config.bandpassLow)-\(config.bandpassHigh) Hz")
+                self.addDebugLog("   Gate threshold: \(config.gateK)σ")
+                self.addDebugLog("   Weights: accel=\(config.accelWeight), gyro=\(config.gyroWeight)")
+                self.addDebugLog("   Template confidence: \(config.nccThresh)")
+                self.addDebugLog("📋 Template matching: \(templates.count) trained templates loaded")
+            }
+            
+            // Set up debug logging
+            detector.setDebugLogger { message in
+                Task { @MainActor in
+                    self.addDebugLog(message)
+                }
+            }
+            
+            // Convert and process
+            let frames = PinchDetector.convertSensorReadings(sensorData)
+            let events = detector.process(frames: frames)
+            
+            let processingTime = CFAbsoluteTimeGetCurrent() - startTime
+            
+            await MainActor.run {
+                self.addDebugLog("=== ANALYSIS COMPLETE ===")
+                self.addDebugLog("✅ Processing time: \(String(format: "%.1f", processingTime * 1000))ms")
+                
+                if !events.isEmpty {
+                    self.addDebugLog("🎉 SUCCESS: \(events.count) pinch events detected!")
+                    self.detectedPinchCount = events.count  // Update UI state
+                    
+                    // Show summary instead of every event
+                    if events.count <= 5 {
+                        // Show all events if 5 or fewer
+                        for (index, event) in events.enumerated() {
+                            self.addDebugLog("   Event \(index + 1): t=\(String(format: "%.3f", event.tPeak))s, confidence=\(String(format: "%.3f", event.confidence))")
+                        }
+                    } else {
+                        // Show summary for many events
+                        let avgConfidence = events.map { $0.confidence }.reduce(0, +) / Float(events.count)
+                        let maxConfidence = events.map { $0.confidence }.max() ?? 0
+                        let minConfidence = events.map { $0.confidence }.min() ?? 0
+                        let timeSpan = (events.last?.tPeak ?? 0) - (events.first?.tPeak ?? 0)
+                        
+                        self.addDebugLog("   📊 Events summary: avg=\(String(format: "%.3f", avgConfidence)), range=\(String(format: "%.3f", minConfidence))-\(String(format: "%.3f", maxConfidence))")
+                        self.addDebugLog("   ⏱️ Time span: \(String(format: "%.1f", timeSpan))s")
+                        self.addDebugLog("   🔍 First event: t=\(String(format: "%.3f", events.first?.tPeak ?? 0))s, conf=\(String(format: "%.3f", events.first?.confidence ?? 0))")
+                        self.addDebugLog("   🏁 Last event: t=\(String(format: "%.3f", events.last?.tPeak ?? 0))s, conf=\(String(format: "%.3f", events.last?.confidence ?? 0))")
+                    }
+                } else {
+                    self.addDebugLog("❌ No pinch events detected")
+                    self.addDebugLog("💡 Check motion data and settings")
+                    self.detectedPinchCount = 0  // Reset UI state
+                }
+                
+                self.isRunningDetection = false
+            }
+        }
+    }
+    
+    private func addDebugLog(_ message: String) {
+        debugLogs.append(message)
+        print("🔬 TKEO DEBUG: \(message)")
+        
+        // Keep only last 50 logs
+        if debugLogs.count > 50 {
+            debugLogs.removeFirst(debugLogs.count - 50)
+        }
+    }
+    
+    private func copyDebugLog() {
+        guard !debugLogs.isEmpty else { return }
+        
+        // Format the debug log for copying
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timestamp = formatter.string(from: Date())
+        
+        let debugText = debugLogs.enumerated().map { index, log in
+            return "\(index + 1). [\(timestamp)] \(log)"
+        }.joined(separator: "\n")
+        
+        // Copy to clipboard
+        #if os(iOS)
+        UIPasteboard.general.string = debugText
+        #elseif os(macOS)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(debugText, forType: .string)
+        #endif
+        
+        // Add a confirmation log
+        addDebugLog("📋 Copied \(debugLogs.count) debug entries to clipboard")
     }
 }
 

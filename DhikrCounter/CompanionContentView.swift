@@ -26,6 +26,7 @@ struct CompanionContentView: View {
                     Image(systemName: "gear")
                     Text("Settings")
                 }
+            
         }
     }
 }
@@ -271,14 +272,313 @@ struct SessionManagementView: View {
 struct SettingsView: View {
     @AppStorage("exportFormat") private var exportFormat: String = "JSON"
     
+    // TKEO Configuration Parameters
+    @AppStorage("tkeo_sampleRate") private var sampleRate: Double = 50.0
+    @AppStorage("tkeo_bandpassLow") private var bandpassLow: Double = 3.0
+    @AppStorage("tkeo_bandpassHigh") private var bandpassHigh: Double = 20.0
+    @AppStorage("tkeo_gateThreshold") private var gateThreshold: Double = 3.5
+    @AppStorage("tkeo_accelWeight") private var accelWeight: Double = 1.0
+    @AppStorage("tkeo_gyroWeight") private var gyroWeight: Double = 1.5
+    @AppStorage("tkeo_refractoryPeriod") private var refractoryPeriod: Double = 0.15
+    @AppStorage("tkeo_templateConfidence") private var templateConfidence: Double = 0.6
+    @AppStorage("tkeo_templateLength") private var templateLength: Double = 40
+    
     var body: some View {
         NavigationStack {
             List {
-                Section("Detection Algorithm") {
-                    SettingRow(title: "Accelerometer Threshold", value: "0.05g")
-                    SettingRow(title: "Gyroscope Threshold", value: "0.18 rad/s")
-                    SettingRow(title: "Sampling Rate", value: "50 Hz")
-                    SettingRow(title: "Refractory Period", value: "250ms")
+                Section("TKEO Detection Algorithm") {
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text("TKEO Pinch Detection")
+                                .foregroundColor(.primary)
+                            Text("Teager-Kaiser Energy Operator for micro-gesture detection")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "waveform.path.ecg")
+                            .foregroundColor(.purple)
+                    }
+                }
+                
+                Section("Signal Processing") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Sample Rate")
+                            Spacer()
+                            Text("\(Int(sampleRate)) Hz")
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        HStack {
+                            Text("Bandpass Filter")
+                            Spacer()
+                            VStack(alignment: .trailing, spacing: 2) {
+                                Text("Low: \(String(format: "%.1f", bandpassLow)) Hz")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Text("High: \(String(format: "%.1f", bandpassHigh)) Hz")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        
+                        VStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text("Low Cutoff Frequency")
+                                        .font(.subheadline)
+                                    Spacer()
+                                    Text("\(String(format: "%.1f", bandpassLow)) Hz")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                Slider(value: $bandpassLow, in: 1.0...10.0, step: 0.5) {
+                                    Text("Low Cutoff")
+                                } minimumValueLabel: {
+                                    Text("1")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                } maximumValueLabel: {
+                                    Text("10")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                Text("Lower values capture slower hand movements")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text("High Cutoff Frequency")
+                                        .font(.subheadline)
+                                    Spacer()
+                                    Text("\(String(format: "%.1f", bandpassHigh)) Hz")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                Slider(value: $bandpassHigh, in: 15.0...30.0, step: 1.0) {
+                                    Text("High Cutoff")
+                                } minimumValueLabel: {
+                                    Text("15")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                } maximumValueLabel: {
+                                    Text("30")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                Text("Higher values capture faster transient movements")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 8)
+                    }
+                }
+                
+                Section("Detection Thresholds") {
+                    VStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("Gate Threshold")
+                                    .font(.subheadline)
+                                Spacer()
+                                Text("\(String(format: "%.1f", gateThreshold))σ")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Slider(value: $gateThreshold, in: 2.0...6.0, step: 0.5) {
+                                Text("Gate Threshold")
+                            } minimumValueLabel: {
+                                Text("2.0")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            } maximumValueLabel: {
+                                Text("6.0")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Text("Lower = more sensitive (more false positives)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("Template Confidence (NCC)")
+                                    .font(.subheadline)
+                                Spacer()
+                                Text("\(String(format: "%.2f", templateConfidence))")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Slider(value: $templateConfidence, in: 0.3...0.9, step: 0.05) {
+                                Text("Template Confidence")
+                            } minimumValueLabel: {
+                                Text("0.3")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            } maximumValueLabel: {
+                                Text("0.9")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Text("Higher = more strict template matching (NCC threshold)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 8)
+                }
+                
+                Section("Sensor Fusion") {
+                    VStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("Accelerometer Weight")
+                                    .font(.subheadline)
+                                Spacer()
+                                Text("\(String(format: "%.1f", accelWeight))")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Slider(value: $accelWeight, in: 0.5...2.0, step: 0.1) {
+                                Text("Accelerometer Weight")
+                            } minimumValueLabel: {
+                                Text("0.5")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            } maximumValueLabel: {
+                                Text("2.0")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Text("Emphasis on linear motion detection")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("Gyroscope Weight")
+                                    .font(.subheadline)
+                                Spacer()
+                                Text("\(String(format: "%.1f", gyroWeight))")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Slider(value: $gyroWeight, in: 0.5...3.0, step: 0.1) {
+                                Text("Gyroscope Weight")
+                            } minimumValueLabel: {
+                                Text("0.5")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            } maximumValueLabel: {
+                                Text("3.0")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Text("Emphasis on rotational motion detection")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 8)
+                }
+                
+                Section("Timing Parameters") {
+                    VStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("Refractory Period")
+                                    .font(.subheadline)
+                                Spacer()
+                                Text("\(Int(refractoryPeriod * 1000))ms")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Slider(value: $refractoryPeriod, in: 0.1...0.5, step: 0.05) {
+                                Text("Refractory Period")
+                            } minimumValueLabel: {
+                                Text("100")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            } maximumValueLabel: {
+                                Text("500")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Text("Minimum time between detections")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("Template Length")
+                                    .font(.subheadline)
+                                Spacer()
+                                Text("\(Int(templateLength)) samples")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Slider(value: $templateLength, in: 20...80, step: 5) {
+                                Text("Template Length")
+                            } minimumValueLabel: {
+                                Text("20")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            } maximumValueLabel: {
+                                Text("80")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Text("Window size for pattern matching (~\(Int(templateLength * 20))ms at 50Hz)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 8)
+                }
+                
+                Section("Quick Presets") {
+                    VStack(spacing: 8) {
+                        Button("Conservative (Low False Positives)") {
+                            setConservativePreset()
+                        }
+                        .buttonStyle(.bordered)
+                        .frame(maxWidth: .infinity)
+                        
+                        Button("Balanced (Default)") {
+                            setDefaultPreset()
+                        }
+                        .buttonStyle(.bordered)
+                        .frame(maxWidth: .infinity)
+                        
+                        Button("Sensitive (High Detection Rate)") {
+                            setSensitivePreset()
+                        }
+                        .buttonStyle(.bordered)
+                        .frame(maxWidth: .infinity)
+                    }
                 }
                 
                 Section("Data Export") {
@@ -340,6 +640,41 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
         }
+    }
+    
+    // MARK: - Preset Configuration Functions
+    
+    private func setConservativePreset() {
+        bandpassLow = 2.0
+        bandpassHigh = 15.0
+        gateThreshold = 4.5
+        accelWeight = 0.8
+        gyroWeight = 1.2
+        refractoryPeriod = 0.2
+        templateConfidence = 0.75
+        templateLength = 50
+    }
+    
+    private func setDefaultPreset() {
+        bandpassLow = 3.0
+        bandpassHigh = 20.0
+        gateThreshold = 3.5
+        accelWeight = 1.0
+        gyroWeight = 1.5
+        refractoryPeriod = 0.15
+        templateConfidence = 0.6
+        templateLength = 40
+    }
+    
+    private func setSensitivePreset() {
+        bandpassLow = 4.0
+        bandpassHigh = 25.0
+        gateThreshold = 2.5
+        accelWeight = 1.2
+        gyroWeight = 1.8
+        refractoryPeriod = 0.1
+        templateConfidence = 0.45
+        templateLength = 30
     }
 }
 

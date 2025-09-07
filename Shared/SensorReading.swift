@@ -1,23 +1,45 @@
 import Foundation
 import simd
 
-struct SensorReading: Codable {
-    let timestamp: Date
-    let motionTimestamp: Double // CMDeviceMotion.timestamp (seconds since boot)
-    let epochTimestamp: Double  // Absolute epoch time in seconds
-    let userAcceleration: SIMD3<Double>
-    let gravity: SIMD3<Double>  // Added gravity data
-    let rotationRate: SIMD3<Double>
-    let attitude: SIMD4<Double> // Quaternion (w, x, y, z)
-    let activityIndex: Double
-    let detectionScore: Double?
-    let sessionState: SessionState
+public struct SensorReading: Codable {
+    public let timestamp: Date
+    public let motionTimestamp: Double // CMDeviceMotion.timestamp (seconds since boot)
+    public let epochTimestamp: Double  // Absolute epoch time in seconds
+    public let userAcceleration: SIMD3<Double>
+    public let gravity: SIMD3<Double>  // Added gravity data
+    public let rotationRate: SIMD3<Double>
+    public let attitude: SIMD4<Double> // Quaternion (w, x, y, z)
+    public let activityIndex: Double
+    public let detectionScore: Double?
+    public let sessionState: SessionState
     
-    enum SessionState: String, Codable {
+    public enum SessionState: String, Codable {
         case inactive
         case setup
         case activeDhikr
         case paused
+    }
+}
+
+// Motion interruption event for tracking sensor stream breaks
+struct MotionInterruption: Codable {
+    let timestamp: Date
+    let motionTimestamp: Double
+    let epochTimestamp: Double
+    let interruptionType: InterruptionType
+    let duration: Double // Duration of interruption in seconds
+    let reason: String
+    
+    enum InterruptionType: String, Codable {
+        case streamPaused = "STREAM_PAUSED"
+        case sensorTimeout = "SENSOR_TIMEOUT"  
+        case motionError = "MOTION_ERROR"
+        case streamResumed = "STREAM_RESUMED"
+    }
+    
+    // CSV format for interruption events
+    func csvRow() -> String {
+        return "# MOTION_INTERRUPTION,\(String(format: "%.6f", motionTimestamp)),\(String(format: "%.6f", epochTimestamp)),\(interruptionType.rawValue),\(String(format: "%.3f", duration)),\(reason)"
     }
 }
 

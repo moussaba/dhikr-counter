@@ -11,7 +11,7 @@ Available schemes:
 # Architecture Overview
 
 ## File-based Session Persistence
-- **Location**: `~/Documents/DhikrSessions/`
+- **Location**: `~/Documents/` (iOS app Documents directory)
 - **Format**: Individual JSON files per session: `session_[UUID].json`
 - **Auto-load**: Sessions automatically loaded on app startup
 - **Structure**: `PersistedSessionData` contains complete session + sensor data
