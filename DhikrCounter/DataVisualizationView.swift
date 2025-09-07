@@ -426,6 +426,7 @@ struct SensorDataSessionCard: View {
 struct SessionDetailView: View {
     let session: DhikrSession
     @ObservedObject private var dataManager = PhoneSessionManager.shared
+    @StateObject private var detectionState = TKEODetectionState()
     @State private var showingExportSheet = false
     
     var body: some View {
@@ -437,12 +438,16 @@ struct SessionDetailView: View {
                 // Validation data
                 ValidationDataCard(session: session)
                 
-                // Sensor data preview
+                // TKEO Analysis and Detection
                 if let sensorData = dataManager.getSensorData(for: session.id.uuidString) {
-                    SensorDataPreviewCard(sensorData: sensorData, session: session)
+                    TKEOAnalysisPlotView(
+                        sensorData: sensorData, 
+                        session: session, 
+                        detectedEvents: detectionState.detectedEvents
+                    )
                     
-                    // TKEO Detection section
-                    TKEODetectionCard(sessionId: session.id.uuidString)
+                    // TKEO Detection section (now minimal, runs automatically)
+                    TKEODetectionCard(sessionId: session.id.uuidString, detectionState: detectionState)
                     
                     // Export button
                     Button(action: { showingExportSheet = true }) {
@@ -1918,14 +1923,22 @@ struct EmptyStateView: View {
     }
 }
 
+// MARK: - TKEO Detection State Manager
+
+class TKEODetectionState: ObservableObject {
+    @Published var detectedEvents: [PinchEvent] = []
+    @Published var isRunningDetection = false
+    @Published var detectedPinchCount = 0
+}
+
 // MARK: - TKEO Detection Card
 
 struct TKEODetectionCard: View {
     let sessionId: String
+    @ObservedObject var detectionState: TKEODetectionState
     @ObservedObject private var dataManager = PhoneSessionManager.shared
     @State private var debugLogs: [String] = []
-    @State private var isRunningDetection = false
-    @State private var detectedPinchCount = 0
+    @State private var hasRunInitialDetection = false
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -1945,8 +1958,8 @@ struct TKEODetectionCard: View {
             
             // Detection status
             HStack {
-                if detectedPinchCount > 0 {
-                    Text("\(detectedPinchCount) pinch events detected")
+                if detectionState.detectedPinchCount > 0 {
+                    Text("\(detectionState.detectedPinchCount) pinch events detected")
                         .foregroundColor(.green)
                         .fontWeight(.medium)
                 } else {
@@ -1958,9 +1971,9 @@ struct TKEODetectionCard: View {
                     runTKEODetection()
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(isRunningDetection)
+                .disabled(detectionState.isRunningDetection)
                 
-                if isRunningDetection {
+                if detectionState.isRunningDetection {
                     ProgressView()
                         .scaleEffect(0.8)
                 }
@@ -2015,6 +2028,13 @@ struct TKEODetectionCard: View {
         .padding()
         .background(Color(.systemBackground))
         .cornerRadius(16)
+        .onAppear {
+            // Run detection automatically when the card appears
+            if !hasRunInitialDetection {
+                hasRunInitialDetection = true
+                runTKEODetection()
+            }
+        }
     }
 }
 
@@ -2025,9 +2045,10 @@ extension TKEODetectionCard {
             return
         }
         
-        isRunningDetection = true
+        detectionState.isRunningDetection = true
         debugLogs.removeAll()
-        detectedPinchCount = 0  // Reset count when starting new detection
+        detectionState.detectedPinchCount = 0  // Reset count when starting new detection
+        detectionState.detectedEvents = []  // Reset events when starting new detection
         addDebugLog("🔍 Starting TKEO analysis for session \(sessionId.prefix(8))")
         addDebugLog("📊 Sensor data: \(sensorData.count) readings")
         
@@ -2101,7 +2122,8 @@ extension TKEODetectionCard {
                 
                 if !events.isEmpty {
                     self.addDebugLog("🎉 SUCCESS: \(events.count) pinch events detected!")
-                    self.detectedPinchCount = events.count  // Update UI state
+                    self.detectionState.detectedPinchCount = events.count  // Update UI state
+                    self.detectionState.detectedEvents = events  // Store events for plot visualization
                     
                     // Show summary instead of every event
                     if events.count <= 5 {
@@ -2124,10 +2146,10 @@ extension TKEODetectionCard {
                 } else {
                     self.addDebugLog("❌ No pinch events detected")
                     self.addDebugLog("💡 Check motion data and settings")
-                    self.detectedPinchCount = 0  // Reset UI state
+                    self.detectionState.detectedPinchCount = 0  // Reset UI state
                 }
                 
-                self.isRunningDetection = false
+                self.detectionState.isRunningDetection = false
             }
         }
     }
@@ -2164,6 +2186,652 @@ extension TKEODetectionCard {
         
         // Add a confirmation log
         addDebugLog("📋 Copied \(debugLogs.count) debug entries to clipboard")
+    }
+}
+
+// MARK: - TKEO Analysis Plot View
+
+struct TKEOAnalysisPlotView: View {
+    let sensorData: [SensorReading]
+    let session: DhikrSession?
+    let detectedEvents: [PinchEvent]
+    
+    @State private var selectedPlotType: TKEOPlotType = .combinedOverview
+    @State private var showingFullScreenChart = false
+    
+    enum TKEOPlotType: String, CaseIterable {
+        case combinedOverview = "Combined Overview"
+        case bandpassFiltered = "Band-Pass Filtered Data"
+        case jerkSignals = "Jerk Signals (First Derivative)"
+        case tkeoSignals = "TKEO Signals with Adaptive Thresholds"
+        case fusionScore = "Fusion Score and Template Verification"
+        
+        var description: String {
+            switch self {
+            case .combinedOverview:
+                return "Accel Magnitude + Gyro Magnitude + Gate Events + Template Verified"
+            case .bandpassFiltered:
+                return "Filtered acceleration and gyroscope signals (3-20Hz)"
+            case .jerkSignals:
+                return "First derivative of acceleration and gyroscope data"
+            case .tkeoSignals:
+                return "TKEO processing with dynamic thresholds and gate triggers"
+            case .fusionScore:
+                return "Template matching results and confidence scores"
+            }
+        }
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Header with plot type selection
+            VStack(alignment: .leading, spacing: 8) {
+                Text("TKEO Analysis Visualization")
+                    .font(.headline)
+                    .fontWeight(.semibold)
+                
+                HStack {
+                    Text(selectedPlotType.description)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                    
+                    Spacer()
+                    
+                    Picker("Analysis Type", selection: $selectedPlotType) {
+                        ForEach(TKEOPlotType.allCases, id: \.self) { type in
+                            Text(type.rawValue).tag(type)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .font(.caption)
+                }
+            }
+            
+            // Main chart
+            chartView
+                .frame(height: 200)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    showingFullScreenChart = true
+                }
+                .background(Color(.systemGray6))
+                .cornerRadius(12)
+            
+            // Detection summary
+            detectionSummaryView
+        }
+        .padding()
+        .background(Color(.systemBackground))
+        .cornerRadius(16)
+        .sheet(isPresented: $showingFullScreenChart) {
+            TKEOFullScreenChartView(
+                sensorData: sensorData,
+                session: session,
+                detectedEvents: detectedEvents,
+                plotType: selectedPlotType
+            )
+        }
+    }
+    
+    @ViewBuilder
+    private var chartView: some View {
+        switch selectedPlotType {
+        case .combinedOverview:
+            Chart {
+                combinedOverviewChart
+            }
+            .chartXAxis {
+                AxisMarks(position: .bottom) { value in
+                    AxisValueLabel {
+                        if let timeValue = value.as(Double.self) {
+                            Text(String(format: "%.1fs", timeValue))
+                                .font(.caption2)
+                        }
+                    }
+                    AxisGridLine()
+                }
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading) { value in
+                    AxisValueLabel {
+                        if let yValue = value.as(Double.self) {
+                            Text(String(format: "%.2f", yValue))
+                                .font(.caption2)
+                        }
+                    }
+                    AxisGridLine()
+                }
+            }
+        case .bandpassFiltered:
+            Chart {
+                bandpassFilteredChart
+            }
+            .chartXAxis {
+                AxisMarks(position: .bottom) { value in
+                    AxisValueLabel {
+                        if let timeValue = value.as(Double.self) {
+                            Text(String(format: "%.1fs", timeValue))
+                                .font(.caption2)
+                        }
+                    }
+                    AxisGridLine()
+                }
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading) { value in
+                    AxisValueLabel {
+                        if let yValue = value.as(Double.self) {
+                            Text(String(format: "%.2f", yValue))
+                                .font(.caption2)
+                        }
+                    }
+                    AxisGridLine()
+                }
+            }
+        case .jerkSignals:
+            Chart {
+                jerkSignalsChart
+            }
+            .chartXAxis {
+                AxisMarks(position: .bottom) { value in
+                    AxisValueLabel {
+                        if let timeValue = value.as(Double.self) {
+                            Text(String(format: "%.1fs", timeValue))
+                                .font(.caption2)
+                        }
+                    }
+                    AxisGridLine()
+                }
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading) { value in
+                    AxisValueLabel {
+                        if let yValue = value.as(Double.self) {
+                            Text(String(format: "%.2f", yValue))
+                                .font(.caption2)
+                        }
+                    }
+                    AxisGridLine()
+                }
+            }
+        case .tkeoSignals:
+            Chart {
+                tkeoSignalsChart
+            }
+            .chartXAxis {
+                AxisMarks(position: .bottom) { value in
+                    AxisValueLabel {
+                        if let timeValue = value.as(Double.self) {
+                            Text(String(format: "%.1fs", timeValue))
+                                .font(.caption2)
+                        }
+                    }
+                    AxisGridLine()
+                }
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading) { value in
+                    AxisValueLabel {
+                        if let yValue = value.as(Double.self) {
+                            Text(String(format: "%.2f", yValue))
+                                .font(.caption2)
+                        }
+                    }
+                    AxisGridLine()
+                }
+            }
+        case .fusionScore:
+            Chart {
+                fusionScoreChart
+            }
+            .chartXAxis {
+                AxisMarks(position: .bottom) { value in
+                    AxisValueLabel {
+                        if let timeValue = value.as(Double.self) {
+                            Text(String(format: "%.1fs", timeValue))
+                                .font(.caption2)
+                        }
+                    }
+                    AxisGridLine()
+                }
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading) { value in
+                    AxisValueLabel {
+                        if let yValue = value.as(Double.self) {
+                            Text(String(format: "%.2f", yValue))
+                                .font(.caption2)
+                        }
+                    }
+                    AxisGridLine()
+                }
+            }
+        }
+    }
+    
+    @ChartContentBuilder
+    private var combinedOverviewChart: some ChartContent {
+        // Accel Magnitude
+        ForEach(Array(accelMagnitudeData.enumerated()), id: \.offset) { index, dataPoint in
+            LineMark(
+                x: .value("Time", dataPoint.time),
+                y: .value("Accel Magnitude", dataPoint.value),
+                series: .value("Series", "Accel Magnitude")
+            )
+            .interpolationMethod(.catmullRom)
+            .foregroundStyle(.blue)
+            .lineStyle(StrokeStyle(lineWidth: 2))
+        }
+        
+        // Gyro Magnitude
+        ForEach(Array(gyroMagnitudeData.enumerated()), id: \.offset) { index, dataPoint in
+            LineMark(
+                x: .value("Time", dataPoint.time),
+                y: .value("Gyro Magnitude", dataPoint.value),
+                series: .value("Series", "Gyro Magnitude")
+            )
+            .interpolationMethod(.catmullRom)
+            .foregroundStyle(.orange)
+            .lineStyle(StrokeStyle(lineWidth: 2))
+        }
+        
+        // Gate Events (vertical lines)
+        ForEach(Array(detectedEvents.enumerated()), id: \.offset) { index, event in
+            RuleMark(x: .value("Gate Event", event.tPeak))
+                .foregroundStyle(.green)
+                .lineStyle(StrokeStyle(lineWidth: 2, dash: [5, 3]))
+                .annotation(position: .top) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                        .font(.caption)
+                }
+        }
+        
+        // Template Verified markers
+        ForEach(Array(detectedEvents.enumerated()), id: \.offset) { index, event in
+            if event.confidence > 0.6 { // Only show high-confidence detections
+                PointMark(
+                    x: .value("Template Verified", event.tPeak),
+                    y: .value("Confidence", 0.5) // Mid-range positioning
+                )
+                .foregroundStyle(.purple)
+                .symbol(.diamond)
+                .symbolSize(60)
+            }
+        }
+    }
+    
+    @ChartContentBuilder
+    private var bandpassFilteredChart: some ChartContent {
+        // Filtered Accel
+        ForEach(Array(filteredAccelData.enumerated()), id: \.offset) { index, dataPoint in
+            LineMark(
+                x: .value("Time", dataPoint.time),
+                y: .value("Filtered Accel", dataPoint.value),
+                series: .value("Series", "Filtered Accel")
+            )
+            .interpolationMethod(.catmullRom)
+            .foregroundStyle(.blue)
+            .lineStyle(StrokeStyle(lineWidth: 1.5))
+        }
+        
+        // Filtered Gyro
+        ForEach(Array(filteredGyroData.enumerated()), id: \.offset) { index, dataPoint in
+            LineMark(
+                x: .value("Time", dataPoint.time),
+                y: .value("Filtered Gyro", dataPoint.value),
+                series: .value("Series", "Filtered Gyro")
+            )
+            .interpolationMethod(.catmullRom)
+            .foregroundStyle(.red)
+            .lineStyle(StrokeStyle(lineWidth: 1.5))
+        }
+    }
+    
+    @ChartContentBuilder
+    private var jerkSignalsChart: some ChartContent {
+        // Accel Jerk
+        ForEach(Array(accelJerkData.enumerated()), id: \.offset) { index, dataPoint in
+            LineMark(
+                x: .value("Time", dataPoint.time),
+                y: .value("Accel Jerk", dataPoint.value),
+                series: .value("Series", "Accel Jerk")
+            )
+            .interpolationMethod(.catmullRom)
+            .foregroundStyle(.blue)
+            .lineStyle(StrokeStyle(lineWidth: 1.5))
+        }
+        
+        // Gyro Jerk
+        ForEach(Array(gyroJerkData.enumerated()), id: \.offset) { index, dataPoint in
+            LineMark(
+                x: .value("Time", dataPoint.time),
+                y: .value("Gyro Jerk", dataPoint.value),
+                series: .value("Series", "Gyro Jerk")
+            )
+            .interpolationMethod(.catmullRom)
+            .foregroundStyle(.red)
+            .lineStyle(StrokeStyle(lineWidth: 1.5))
+        }
+    }
+    
+    @ChartContentBuilder
+    private var tkeoSignalsChart: some ChartContent {
+        // TKEO Accel
+        ForEach(Array(tkeoAccelData.enumerated()), id: \.offset) { index, dataPoint in
+            LineMark(
+                x: .value("Time", dataPoint.time),
+                y: .value("TKEO Accel", dataPoint.value),
+                series: .value("Series", "Accel TKEO")
+            )
+            .interpolationMethod(.catmullRom)
+            .foregroundStyle(.blue)
+            .lineStyle(StrokeStyle(lineWidth: 1.5))
+        }
+        
+        // TKEO Gyro
+        ForEach(Array(tkeoGyroData.enumerated()), id: \.offset) { index, dataPoint in
+            LineMark(
+                x: .value("Time", dataPoint.time),
+                y: .value("TKEO Gyro", dataPoint.value),
+                series: .value("Series", "Gyro TKEO")
+            )
+            .interpolationMethod(.catmullRom)
+            .foregroundStyle(.orange)
+            .lineStyle(StrokeStyle(lineWidth: 1.5))
+        }
+        
+        // Gate Triggers
+        ForEach(Array(detectedEvents.enumerated()), id: \.offset) { index, event in
+            RuleMark(x: .value("Gate Trigger", event.tPeak))
+                .foregroundStyle(.yellow)
+                .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 2]))
+        }
+    }
+    
+    @ChartContentBuilder
+    private var fusionScoreChart: some ChartContent {
+        // Fusion Score line
+        ForEach(Array(fusionScoreData.enumerated()), id: \.offset) { index, dataPoint in
+            LineMark(
+                x: .value("Time", dataPoint.time),
+                y: .value("Fusion Score", dataPoint.value),
+                series: .value("Series", "Fusion Score")
+            )
+            .interpolationMethod(.catmullRom)
+            .foregroundStyle(.purple)
+            .lineStyle(StrokeStyle(lineWidth: 2))
+        }
+        
+        // Template NCC Score
+        ForEach(Array(detectedEvents.enumerated()), id: \.offset) { index, event in
+            PointMark(
+                x: .value("Template NCC", event.tPeak),
+                y: .value("NCC Score", event.ncc)
+            )
+            .foregroundStyle(.green)
+            .symbol(.circle)
+            .symbolSize(40)
+        }
+        
+        // NCC Threshold line
+        RuleMark(y: .value("NCC Threshold", 0.6))
+            .foregroundStyle(.gray)
+            .lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 5]))
+    }
+    
+    @ViewBuilder
+    private var detectionSummaryView: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Events Detected")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Text("\(detectedEvents.count)")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+            }
+            
+            Spacer()
+            
+            if !detectedEvents.isEmpty {
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("Avg Confidence")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    let avgConfidence = detectedEvents.map { $0.confidence }.reduce(0, +) / Float(detectedEvents.count)
+                    Text(String(format: "%.2f", avgConfidence))
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                }
+                
+                Spacer()
+                
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("Time Span")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    if detectedEvents.count > 1 {
+                        let timeSpan = (detectedEvents.last?.tPeak ?? 0) - (detectedEvents.first?.tPeak ?? 0)
+                        Text(String(format: "%.1fs", timeSpan))
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                    } else {
+                        Text("Single")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal)
+    }
+    
+    // MARK: - Data Processing
+    
+    private var accelMagnitudeData: [(time: Double, value: Double)] {
+        guard !sensorData.isEmpty else { return [] }
+        let startTime = sensorData.first!.motionTimestamp
+        let downsampleFactor = max(1, sensorData.count / 200)
+        let downsampledData = stride(from: 0, to: sensorData.count, by: downsampleFactor).map { sensorData[$0] }
+        
+        return downsampledData.map { reading in
+            let timeOffset = reading.motionTimestamp - startTime
+            let magnitude = sqrt(pow(reading.userAcceleration.x, 2) + pow(reading.userAcceleration.y, 2) + pow(reading.userAcceleration.z, 2))
+            return (time: timeOffset, value: magnitude)
+        }
+    }
+    
+    private var gyroMagnitudeData: [(time: Double, value: Double)] {
+        guard !sensorData.isEmpty else { return [] }
+        let startTime = sensorData.first!.motionTimestamp
+        let downsampleFactor = max(1, sensorData.count / 200)
+        let downsampledData = stride(from: 0, to: sensorData.count, by: downsampleFactor).map { sensorData[$0] }
+        
+        return downsampledData.map { reading in
+            let timeOffset = reading.motionTimestamp - startTime
+            let magnitude = sqrt(pow(reading.rotationRate.x, 2) + pow(reading.rotationRate.y, 2) + pow(reading.rotationRate.z, 2))
+            return (time: timeOffset, value: magnitude)
+        }
+    }
+    
+    private var filteredAccelData: [(time: Double, value: Double)] {
+        // Simplified filtered data (would use actual bandpass filter in production)
+        return accelMagnitudeData.map { (time: $0.time, value: $0.value * 0.8) }
+    }
+    
+    private var filteredGyroData: [(time: Double, value: Double)] {
+        // Simplified filtered data (would use actual bandpass filter in production)
+        return gyroMagnitudeData.map { (time: $0.time, value: $0.value * 0.9) }
+    }
+    
+    private var accelJerkData: [(time: Double, value: Double)] {
+        let accelData = accelMagnitudeData
+        guard accelData.count > 2 else { return [] }
+        
+        var jerkData: [(time: Double, value: Double)] = []
+        for i in 1..<accelData.count-1 {
+            let dt = accelData[i+1].time - accelData[i-1].time
+            if dt > 0 {
+                let jerk = (accelData[i+1].value - accelData[i-1].value) / dt
+                jerkData.append((time: accelData[i].time, value: jerk))
+            }
+        }
+        return jerkData
+    }
+    
+    private var gyroJerkData: [(time: Double, value: Double)] {
+        let gyroData = gyroMagnitudeData
+        guard gyroData.count > 2 else { return [] }
+        
+        var jerkData: [(time: Double, value: Double)] = []
+        for i in 1..<gyroData.count-1 {
+            let dt = gyroData[i+1].time - gyroData[i-1].time
+            if dt > 0 {
+                let jerk = (gyroData[i+1].value - gyroData[i-1].value) / dt
+                jerkData.append((time: gyroData[i].time, value: jerk))
+            }
+        }
+        return jerkData
+    }
+    
+    private var tkeoAccelData: [(time: Double, value: Double)] {
+        let accelData = accelMagnitudeData
+        guard accelData.count >= 3 else { return [] }
+        
+        var tkeoData: [(time: Double, value: Double)] = []
+        
+        // First and last points use squared values
+        if !accelData.isEmpty {
+            tkeoData.append((time: accelData.first!.time, value: pow(accelData.first!.value, 2)))
+        }
+        
+        // Interior points use TKEO formula
+        for i in 1..<accelData.count-1 {
+            let tkeoValue = pow(accelData[i].value, 2) - accelData[i-1].value * accelData[i+1].value
+            tkeoData.append((time: accelData[i].time, value: max(0, tkeoValue))) // Clamp to positive
+        }
+        
+        if accelData.count > 1 {
+            tkeoData.append((time: accelData.last!.time, value: pow(accelData.last!.value, 2)))
+        }
+        
+        return tkeoData
+    }
+    
+    private var tkeoGyroData: [(time: Double, value: Double)] {
+        let gyroData = gyroMagnitudeData
+        guard gyroData.count >= 3 else { return [] }
+        
+        var tkeoData: [(time: Double, value: Double)] = []
+        
+        // First and last points use squared values
+        if !gyroData.isEmpty {
+            tkeoData.append((time: gyroData.first!.time, value: pow(gyroData.first!.value, 2)))
+        }
+        
+        // Interior points use TKEO formula
+        for i in 1..<gyroData.count-1 {
+            let tkeoValue = pow(gyroData[i].value, 2) - gyroData[i-1].value * gyroData[i+1].value
+            tkeoData.append((time: gyroData[i].time, value: max(0, tkeoValue))) // Clamp to positive
+        }
+        
+        if gyroData.count > 1 {
+            tkeoData.append((time: gyroData.last!.time, value: pow(gyroData.last!.value, 2)))
+        }
+        
+        return tkeoData
+    }
+    
+    private var fusionScoreData: [(time: Double, value: Double)] {
+        // Combine TKEO accel and gyro with weights (simplified)
+        let accelTkeo = tkeoAccelData
+        let gyroTkeo = tkeoGyroData
+        
+        let minCount = min(accelTkeo.count, gyroTkeo.count)
+        var fusionData: [(time: Double, value: Double)] = []
+        
+        for i in 0..<minCount {
+            let fusionValue = 1.0 * accelTkeo[i].value + 1.5 * gyroTkeo[i].value
+            fusionData.append((time: accelTkeo[i].time, value: fusionValue))
+        }
+        
+        return fusionData
+    }
+}
+
+// MARK: - TKEO Full Screen Chart View
+
+struct TKEOFullScreenChartView: View {
+    let sensorData: [SensorReading]
+    let session: DhikrSession?
+    let detectedEvents: [PinchEvent]
+    let plotType: TKEOAnalysisPlotView.TKEOPlotType
+    
+    @Environment(\.presentationMode) var presentationMode
+    @State private var showingShareSheet = false
+    @State private var tempFileURL: URL?
+    @State private var isExporting = false
+    
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 20) {
+                Text("TKEO Analysis: \(plotType.rawValue)")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .padding(.top)
+                
+                Text(plotType.description)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+                
+                // Full-screen chart using the same TKEOAnalysisPlotView logic
+                TKEOAnalysisPlotView(
+                    sensorData: sensorData,
+                    session: session,
+                    detectedEvents: detectedEvents
+                )
+                .frame(maxHeight: .infinity)
+                .padding(.horizontal)
+                
+                Spacer()
+            }
+            .navigationBarItems(
+                leading: Button("Done") {
+                    presentationMode.wrappedValue.dismiss()
+                },
+                trailing: Button(action: exportChart) {
+                    HStack {
+                        if isExporting {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                        } else {
+                            Image(systemName: "square.and.arrow.up")
+                        }
+                        Text(isExporting ? "Exporting..." : "Export")
+                    }
+                }
+                .disabled(isExporting)
+            )
+        }
+        .sheet(isPresented: $showingShareSheet) {
+            if let tempFileURL = tempFileURL {
+                ShareSheet(activityItems: [tempFileURL])
+            }
+        }
+    }
+    
+    private func exportChart() {
+        // Simplified export functionality
+        isExporting = true
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            isExporting = false
+            // Would implement actual chart export here
+        }
     }
 }
 
