@@ -700,7 +700,7 @@ struct EnhancedSessionRowView: View {
     @ObservedObject private var dataManager = PhoneSessionManager.shared
     
     var body: some View {
-        NavigationLink(destination: DataVisualizationView()) {
+        NavigationLink(destination: SessionDetailView(session: session)) {
             HStack(spacing: 12) {
                 // Data visualization mini chart
                 VStack {

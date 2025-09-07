@@ -27,21 +27,21 @@ public struct PinchConfig {
     let windowPreMs: Float
     let windowPostMs: Float
     
-    // Only initializer - always uses all settings from UserDefaults
+    // Convenience initializer with default values to reduce brittleness
     public init(
-        fs: Float,
-        bandpassLow: Float,
-        bandpassHigh: Float,
-        accelWeight: Float,
-        gyroWeight: Float,
-        madWinSec: Float,
-        gateK: Float,
-        refractoryMs: Float,
-        minWidthMs: Float,
-        maxWidthMs: Float,
-        nccThresh: Float,
-        windowPreMs: Float,
-        windowPostMs: Float
+        fs: Float = 50.0,
+        bandpassLow: Float = 3.0,
+        bandpassHigh: Float = 20.0,
+        accelWeight: Float = 1.0,
+        gyroWeight: Float = 1.5,
+        madWinSec: Float = 3.0,
+        gateK: Float = 3.5,
+        refractoryMs: Float = 150,
+        minWidthMs: Float = 60,
+        maxWidthMs: Float = 400,
+        nccThresh: Float = 0.6,
+        windowPreMs: Float = 150,
+        windowPostMs: Float = 250
     ) {
         self.fs = fs
         self.bandpassLow = bandpassLow
@@ -56,6 +56,26 @@ public struct PinchConfig {
         self.nccThresh = nccThresh
         self.windowPreMs = windowPreMs
         self.windowPostMs = windowPostMs
+    }
+    
+    // Static factory method for creating from UserDefaults
+    public static func fromUserDefaults() -> PinchConfig {
+        let userDefaults = UserDefaults.standard
+        return PinchConfig(
+            fs: userDefaults.object(forKey: "tkeo_sampleRate") as? Float ?? 50.0,
+            bandpassLow: userDefaults.object(forKey: "tkeo_bandpassLow") as? Float ?? 3.0,
+            bandpassHigh: userDefaults.object(forKey: "tkeo_bandpassHigh") as? Float ?? 20.0,
+            accelWeight: userDefaults.object(forKey: "tkeo_accelWeight") as? Float ?? 1.0,
+            gyroWeight: userDefaults.object(forKey: "tkeo_gyroWeight") as? Float ?? 1.5,
+            madWinSec: userDefaults.object(forKey: "tkeo_madWinSec") as? Float ?? 3.0,
+            gateK: userDefaults.object(forKey: "tkeo_gateK") as? Float ?? 3.5,
+            refractoryMs: userDefaults.object(forKey: "tkeo_refractoryMs") as? Float ?? 150,
+            minWidthMs: userDefaults.object(forKey: "tkeo_minWidthMs") as? Float ?? 60,
+            maxWidthMs: userDefaults.object(forKey: "tkeo_maxWidthMs") as? Float ?? 400,
+            nccThresh: userDefaults.object(forKey: "tkeo_nccThresh") as? Float ?? 0.6,
+            windowPreMs: userDefaults.object(forKey: "tkeo_windowPreMs") as? Float ?? 150,
+            windowPostMs: userDefaults.object(forKey: "tkeo_windowPostMs") as? Float ?? 250
+        )
     }
 }
 
@@ -307,15 +327,21 @@ public final class PinchDetector {
                 window = Array(window[0..<L])
             }
             
-            // Try all templates to find the best match
+            // Try templates to find the best match (with early termination optimization)
             var bestNccScore: Float = 0.0
             var bestTemplateIndex = -1
+            let earlyTerminationThreshold: Float = 0.95 // Stop if we get very high confidence
             
             for (templateIndex, template) in templates.enumerated() {
                 let nccScore = ncc(window: window, template: template.data)
                 if nccScore > bestNccScore {
                     bestNccScore = nccScore
                     bestTemplateIndex = templateIndex
+                    
+                    // Early termination: if we get very high confidence, no need to test remaining templates
+                    if nccScore >= earlyTerminationThreshold {
+                        break
+                    }
                 }
             }
             
