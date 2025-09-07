@@ -109,8 +109,15 @@ venv.bak/
 
 # Data files
 *.csv
-*.json
 sensor_data/
 analysis_results/
 data/
 analysis_*/
+
+# TKEO Analysis Output (generated files)
+tkeo_analysis_session_*/
+session_*.json
+debug_python_vs_swift/
+
+# Python virtual environment
+.venv/
