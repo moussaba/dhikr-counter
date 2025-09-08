@@ -185,6 +185,47 @@ class PhoneSessionManager: NSObject, ObservableObject {
         }
     }
     
+    func deleteSession(_ session: DhikrSession) {
+        let sessionId = session.id.uuidString
+        addDebugMessage("🗑️ Deleting session: \(sessionId.prefix(8))")
+        
+        // Remove from receivedSessions array
+        if let index = receivedSessions.firstIndex(where: { $0.id.uuidString == sessionId }) {
+            receivedSessions.remove(at: index)
+            addDebugMessage("📱 Removed session from memory array")
+        }
+        
+        // Remove from stored data
+        storedSensorData.removeValue(forKey: sessionId)
+        storedDetectionEvents.removeValue(forKey: sessionId)
+        storedMetadata.removeValue(forKey: sessionId)
+        addDebugMessage("💾 Removed session data from memory")
+        
+        // Remove session files from disk
+        let fileName = "session_\(sessionId).json"
+        let fileURL = sessionsDirectory.appendingPathComponent(fileName)
+        let metadataURL = sessionsDirectory.appendingPathComponent("session_\(sessionId).meta.json")
+        
+        do {
+            // Remove main session file if it exists
+            if FileManager.default.fileExists(atPath: fileURL.path) {
+                try FileManager.default.removeItem(at: fileURL)
+                addDebugMessage("📄 Deleted session file: \(fileName)")
+            }
+            
+            // Remove metadata file if it exists
+            if FileManager.default.fileExists(atPath: metadataURL.path) {
+                try FileManager.default.removeItem(at: metadataURL)
+                addDebugMessage("📊 Deleted metadata file: session_\(sessionId).meta.json")
+            }
+            
+            addDebugMessage("✅ Successfully deleted session \(sessionId.prefix(8))")
+            
+        } catch {
+            addDebugMessage("❌ Error deleting session files for \(sessionId.prefix(8)): \(error.localizedDescription)")
+        }
+    }
+    
     func getDetectionEventCount(for sessionId: String) -> Int {
         return storedMetadata[sessionId]?.detectionEventCount ?? 0
     }

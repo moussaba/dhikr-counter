@@ -428,6 +428,7 @@ struct SessionDetailView: View {
     @ObservedObject private var dataManager = PhoneSessionManager.shared
     @StateObject private var detectionState = TKEODetectionState()
     @State private var showingExportSheet = false
+    @State private var showingTKEOExportSheet = false
     
     var body: some View {
         ScrollView {
@@ -449,6 +450,17 @@ struct SessionDetailView: View {
                     // TKEO Detection section (now minimal, runs automatically)
                     TKEODetectionCard(sessionId: session.id.uuidString, detectionState: detectionState)
                     
+                    // TKEO Analysis Export button
+                    Button(action: { showingTKEOExportSheet = true }) {
+                        HStack {
+                            Image(systemName: "chart.line.uptrend.xyaxis")
+                            Text("Export Analysis")
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .padding(.horizontal)
+                    
                     // Export button
                     Button(action: { showingExportSheet = true }) {
                         HStack {
@@ -467,6 +479,15 @@ struct SessionDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showingExportSheet) {
             SessionExportView(session: session)
+        }
+        .sheet(isPresented: $showingTKEOExportSheet) {
+            if let sensorData = dataManager.getSensorData(for: session.id.uuidString) {
+                TKEOAnalysisExportSheet(
+                    session: session,
+                    sensorData: sensorData,
+                    detectedEvents: detectionState.detectedEvents
+                )
+            }
         }
     }
 }
@@ -2199,6 +2220,7 @@ struct TKEOAnalysisPlotView: View {
     
     @State private var selectedPlotType: TKEOPlotType = .combinedOverview
     @State private var showingFullScreenChart = false
+    @State private var showingExportSheet = false
     
     init(sensorData: [SensorReading], session: DhikrSession?, detectedEvents: [PinchEvent], isFullScreen: Bool = false, plotType: TKEOPlotType? = nil) {
         self.sensorData = sensorData
@@ -2254,6 +2276,16 @@ struct TKEOAnalysisPlotView: View {
                         
                         Spacer()
                         
+                        // Export button
+                        Button(action: {
+                            showingExportSheet = true
+                        }) {
+                            Image(systemName: "square.and.arrow.up")
+                                .font(.caption)
+                                .foregroundColor(.blue)
+                        }
+                        .disabled(session == nil)
+                        
                         Picker("Analysis Type", selection: $selectedPlotType) {
                             ForEach(TKEOPlotType.allCases, id: \.self) { type in
                                 Text(type.rawValue).tag(type)
@@ -2290,6 +2322,15 @@ struct TKEOAnalysisPlotView: View {
                     detectedEvents: detectedEvents,
                     plotType: selectedPlotType
                 )
+            }
+            .sheet(isPresented: $showingExportSheet) {
+                if let session = session {
+                    TKEOAnalysisExportSheet(
+                        session: session,
+                        sensorData: sensorData,
+                        detectedEvents: detectedEvents
+                    )
+                }
             }
         }
     }
