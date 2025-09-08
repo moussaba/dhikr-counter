@@ -179,7 +179,7 @@ public final class PinchDetector {
     public static func convertSensorReadings(_ readings: [SensorReading]) -> [SensorFrame] {
         return readings.map { reading in
             SensorFrame(
-                t: reading.epochTimestamp,
+                t: reading.motionTimestamp,
                 ax: Float(reading.userAcceleration[0]),
                 ay: Float(reading.userAcceleration[1]),
                 az: Float(reading.userAcceleration[2]),
