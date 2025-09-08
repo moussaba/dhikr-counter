@@ -33,7 +33,6 @@
 		F505F6592E66C7A2003714BE /* PhoneSessionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F505F6582E66C7A2003714BE /* PhoneSessionManager.swift */; };
 		F531EB3C2E6D23CD00CCD0B6 /* trained_templates.json in Resources */ = {isa = PBXBuildFile; fileRef = F531EB3B2E6D23CD00CCD0B6 /* trained_templates.json */; };
 		F531EB422E6D795400CCD0B6 /* PinchDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = F531EB412E6D795400CCD0B6 /* PinchDetector.swift */; };
-		F531EB5B2E6E778900CCD0B6 /* TKEOChartImageExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F531EB582E6E778900CCD0B6 /* TKEOChartImageExporter.swift */; };
 		F531EB5C2E6E778900CCD0B6 /* TKEOExportUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F531EB592E6E778900CCD0B6 /* TKEOExportUI.swift */; };
 		F531EB5D2E6E778900CCD0B6 /* TKEOHTMLReportGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F531EB5A2E6E778900CCD0B6 /* TKEOHTMLReportGenerator.swift */; };
 		F531EB5E2E6E778900CCD0B6 /* TKEOAnalysisDataExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F531EB562E6E778900CCD0B6 /* TKEOAnalysisDataExporter.swift */; };
@@ -119,7 +118,6 @@
 		F531EB412E6D795400CCD0B6 /* PinchDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinchDetector.swift; sourceTree = "<group>"; };
 		F531EB562E6E778900CCD0B6 /* TKEOAnalysisDataExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TKEOAnalysisDataExporter.swift; sourceTree = "<group>"; };
 		F531EB572E6E778900CCD0B6 /* TKEOAnalysisExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TKEOAnalysisExporter.swift; sourceTree = "<group>"; };
-		F531EB582E6E778900CCD0B6 /* TKEOChartImageExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TKEOChartImageExporter.swift; sourceTree = "<group>"; };
 		F531EB592E6E778900CCD0B6 /* TKEOExportUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TKEOExportUI.swift; sourceTree = "<group>"; };
 		F531EB5A2E6E778900CCD0B6 /* TKEOHTMLReportGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TKEOHTMLReportGenerator.swift; sourceTree = "<group>"; };
 		F531EB602E6E8B3E00CCD0B6 /* TKEOChartImageExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TKEOChartImageExporter.swift; sourceTree = "<group>"; };
@@ -162,7 +160,6 @@
 				F531EB602E6E8B3E00CCD0B6 /* TKEOChartImageExporter.swift */,
 				F531EB562E6E778900CCD0B6 /* TKEOAnalysisDataExporter.swift */,
 				F531EB572E6E778900CCD0B6 /* TKEOAnalysisExporter.swift */,
-				F531EB582E6E778900CCD0B6 /* TKEOChartImageExporter.swift */,
 				F531EB592E6E778900CCD0B6 /* TKEOExportUI.swift */,
 				F531EB5A2E6E778900CCD0B6 /* TKEOHTMLReportGenerator.swift */,
 				F531EB412E6D795400CCD0B6 /* PinchDetector.swift */,
@@ -344,7 +341,6 @@
 				05F5AF870A839A38B9E93944 /* DhikrCounterCompanionApp.swift in Sources */,
 				5E9CAF645B9CD229BEBA4B60 /* DhikrSession.swift in Sources */,
 				F505F6592E66C7A2003714BE /* PhoneSessionManager.swift in Sources */,
-				F531EB5B2E6E778900CCD0B6 /* TKEOChartImageExporter.swift in Sources */,
 				F531EB5C2E6E778900CCD0B6 /* TKEOExportUI.swift in Sources */,
 				F531EB5D2E6E778900CCD0B6 /* TKEOHTMLReportGenerator.swift in Sources */,
 				F531EB5E2E6E778900CCD0B6 /* TKEOAnalysisDataExporter.swift in Sources */,
