@@ -245,27 +245,200 @@ struct RecentSessionsView: View {
 }
 
 struct SessionManagementView: View {
+    @ObservedObject private var dataManager = PhoneSessionManager.shared
+    @State private var currentPage = 0
+    @State private var showingDeleteAlert = false
+    @State private var sessionToDelete: DhikrSession?
+    
+    private let sessionsPerPage = 20
+    
+    private var totalPages: Int {
+        max(1, Int(ceil(Double(dataManager.receivedSessions.count) / Double(sessionsPerPage))))
+    }
+    
+    private var currentPageSessions: [DhikrSession] {
+        let sortedSessions = dataManager.receivedSessions.sorted(by: { $0.startTime > $1.startTime })
+        let startIndex = currentPage * sessionsPerPage
+        let endIndex = min(startIndex + sessionsPerPage, sortedSessions.count)
+        return Array(sortedSessions[startIndex..<endIndex])
+    }
+    
     var body: some View {
         NavigationStack {
-            VStack(spacing: 20) {
-                Image(systemName: "list.bullet")
-                    .font(.system(size: 60))
-                    .foregroundColor(.secondary)
+            VStack(spacing: 0) {
+                if dataManager.receivedSessions.isEmpty {
+                    // Empty state
+                    VStack(spacing: 20) {
+                        Image(systemName: "list.bullet")
+                            .font(.system(size: 60))
+                            .foregroundColor(.secondary)
+                        
+                        Text("No Sessions")
+                            .font(.title2)
+                            .fontWeight(.semibold)
+                        
+                        Text("Start a session on your Apple Watch to see it here")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                        
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    // Session list
+                    List {
+                        ForEach(currentPageSessions) { session in
+                            NavigationLink(destination: SessionDetailView(session: session)) {
+                                SessionListRowView(session: session)
+                            }
+                        }
+                        .onDelete(perform: deleteSessions)
+                    }
+                    
+                    // Pagination controls
+                    if totalPages > 1 {
+                        HStack {
+                            Button("Previous") {
+                                if currentPage > 0 {
+                                    currentPage -= 1
+                                }
+                            }
+                            .disabled(currentPage == 0)
+                            
+                            Spacer()
+                            
+                            Text("Page \(currentPage + 1) of \(totalPages)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            
+                            Spacer()
+                            
+                            Button("Next") {
+                                if currentPage < totalPages - 1 {
+                                    currentPage += 1
+                                }
+                            }
+                            .disabled(currentPage >= totalPages - 1)
+                        }
+                        .padding()
+                        .background(Color(.systemGray6))
+                    }
+                }
+            }
+            .navigationTitle("Sessions (\(dataManager.receivedSessions.count))")
+            .toolbar {
+                if !dataManager.receivedSessions.isEmpty {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        EditButton()
+                    }
+                }
+            }
+        }
+        .alert("Delete Session", isPresented: $showingDeleteAlert) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                if let session = sessionToDelete {
+                    deleteSession(session)
+                }
+            }
+        } message: {
+            Text("Are you sure you want to delete this session? This action cannot be undone.")
+        }
+    }
+    
+    private func deleteSessions(at offsets: IndexSet) {
+        for index in offsets {
+            let session = currentPageSessions[index]
+            sessionToDelete = session
+            showingDeleteAlert = true
+        }
+    }
+    
+    private func deleteSession(_ session: DhikrSession) {
+        dataManager.deleteSession(session)
+        
+        // Adjust current page if needed
+        let newTotalPages = max(1, Int(ceil(Double(dataManager.receivedSessions.count) / Double(sessionsPerPage))))
+        if currentPage >= newTotalPages {
+            currentPage = max(0, newTotalPages - 1)
+        }
+        
+        sessionToDelete = nil
+    }
+}
+
+struct SessionListRowView: View {
+    let session: DhikrSession
+    @ObservedObject private var dataManager = PhoneSessionManager.shared
+    
+    private var durationText: String {
+        let duration = session.sessionDuration
+        let minutes = Int(duration) / 60
+        let seconds = Int(duration) % 60
+        return String(format: "%d:%02d", minutes, seconds)
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(session.startTime, style: .date)
+                        .font(.headline)
+                    
+                    Text(session.startTime, style: .time)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
                 
-                Text("Session Management")
-                    .font(.title2)
-                    .fontWeight(.semibold)
+                Spacer()
                 
-                Text("Session data management and export functionality coming in Phase 3")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text(durationText)
+                        .font(.headline)
+                        .foregroundColor(.blue)
+                    
+                    if session.totalPinches > 0 {
+                        Text("\(session.totalPinches) pinches")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            
+            // Session stats
+            HStack(spacing: 16) {
+                HStack {
+                    Image(systemName: "waveform.path.ecg")
+                        .foregroundColor(.green)
+                    Text("\(dataManager.getSensorDataCount(for: session.id.uuidString))")
+                        .font(.caption)
+                }
+                
+                if session.detectedPinches > 0 {
+                    HStack {
+                        Image(systemName: "target")
+                            .foregroundColor(.orange)
+                        Text("\(session.detectedPinches)")
+                            .font(.caption)
+                    }
+                }
+                
+                if let actualCount = session.actualPinchCount {
+                    HStack {
+                        Image(systemName: "checkmark.circle")
+                            .foregroundColor(.blue)
+                        Text("\(actualCount)")
+                            .font(.caption)
+                    }
+                }
                 
                 Spacer()
             }
-            .navigationTitle("Sessions")
+            .foregroundColor(.secondary)
         }
+        .padding(.vertical, 4)
     }
 }
 
