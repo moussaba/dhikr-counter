@@ -1,5 +1,4 @@
 import Foundation
-import Accelerate
 
 public struct SensorFrame {
     let t: TimeInterval
@@ -27,6 +26,14 @@ public struct PinchConfig {
     let windowPreMs: Float
     let windowPostMs: Float
     
+    // Bookend spike protection parameters
+    let ignoreStartMs: Float
+    let ignoreEndMs: Float
+    let gateRampMs: Float
+    let gyroVetoThresh: Float     // rad/s
+    let gyroVetoHoldMs: Float     // require quiet for this long before enabling
+    let preQuietMs: Float         // pre-silence requirement
+    
     // Convenience initializer with default values to reduce brittleness
     public init(
         fs: Float = 50.0,
@@ -41,7 +48,13 @@ public struct PinchConfig {
         maxWidthMs: Float = 400,
         nccThresh: Float = 0.6,
         windowPreMs: Float = 150,
-        windowPostMs: Float = 250
+        windowPostMs: Float = 250,
+        ignoreStartMs: Float = 500,
+        ignoreEndMs: Float = 500,
+        gateRampMs: Float = 1000,
+        gyroVetoThresh: Float = 1.2,
+        gyroVetoHoldMs: Float = 180,
+        preQuietMs: Float = 150
     ) {
         self.fs = fs
         self.bandpassLow = bandpassLow
@@ -56,25 +69,47 @@ public struct PinchConfig {
         self.nccThresh = nccThresh
         self.windowPreMs = windowPreMs
         self.windowPostMs = windowPostMs
+        self.ignoreStartMs = ignoreStartMs
+        self.ignoreEndMs = ignoreEndMs
+        self.gateRampMs = gateRampMs
+        self.gyroVetoThresh = gyroVetoThresh
+        self.gyroVetoHoldMs = gyroVetoHoldMs
+        self.preQuietMs = preQuietMs
     }
     
-    // Static factory method for creating from UserDefaults
-    public static func fromUserDefaults() -> PinchConfig {
+    // Static factory method for creating from UserDefaults with template-aware timing
+    public static func fromUserDefaults(templates: [PinchTemplate] = []) -> PinchConfig {
         let userDefaults = UserDefaults.standard
+        
+        // Calculate window timing from templates if available
+        var windowPreMs: Float = 150
+        var windowPostMs: Float = 150
+        
+        if let firstTemplate = templates.first {
+            windowPreMs = firstTemplate.preMs
+            windowPostMs = firstTemplate.postMs
+        }
+        
         return PinchConfig(
-            fs: userDefaults.object(forKey: "tkeo_sampleRate") as? Float ?? 50.0,
-            bandpassLow: userDefaults.object(forKey: "tkeo_bandpassLow") as? Float ?? 3.0,
-            bandpassHigh: userDefaults.object(forKey: "tkeo_bandpassHigh") as? Float ?? 20.0,
-            accelWeight: userDefaults.object(forKey: "tkeo_accelWeight") as? Float ?? 1.0,
-            gyroWeight: userDefaults.object(forKey: "tkeo_gyroWeight") as? Float ?? 1.5,
-            madWinSec: userDefaults.object(forKey: "tkeo_madWinSec") as? Float ?? 3.0,
-            gateK: userDefaults.object(forKey: "tkeo_gateK") as? Float ?? 3.5,
-            refractoryMs: userDefaults.object(forKey: "tkeo_refractoryMs") as? Float ?? 150,
-            minWidthMs: userDefaults.object(forKey: "tkeo_minWidthMs") as? Float ?? 60,
-            maxWidthMs: userDefaults.object(forKey: "tkeo_maxWidthMs") as? Float ?? 400,
-            nccThresh: userDefaults.object(forKey: "tkeo_nccThresh") as? Float ?? 0.6,
-            windowPreMs: userDefaults.object(forKey: "tkeo_windowPreMs") as? Float ?? 150,
-            windowPostMs: userDefaults.object(forKey: "tkeo_windowPostMs") as? Float ?? 250
+            fs: userDefaults.object(forKey: "tkeo_sampleRate") != nil ? Float(userDefaults.double(forKey: "tkeo_sampleRate")) : 50.0,
+            bandpassLow: userDefaults.object(forKey: "tkeo_bandpassLow") != nil ? Float(userDefaults.double(forKey: "tkeo_bandpassLow")) : 3.0,
+            bandpassHigh: userDefaults.object(forKey: "tkeo_bandpassHigh") != nil ? Float(userDefaults.double(forKey: "tkeo_bandpassHigh")) : 20.0,
+            accelWeight: userDefaults.object(forKey: "tkeo_accelWeight") != nil ? Float(userDefaults.double(forKey: "tkeo_accelWeight")) : 1.0,
+            gyroWeight: userDefaults.object(forKey: "tkeo_gyroWeight") != nil ? Float(userDefaults.double(forKey: "tkeo_gyroWeight")) : 1.5,
+            madWinSec: userDefaults.object(forKey: "tkeo_madWinSec") != nil ? Float(userDefaults.double(forKey: "tkeo_madWinSec")) : 3.0,
+            gateK: userDefaults.object(forKey: "tkeo_gateThreshold") != nil ? Float(userDefaults.double(forKey: "tkeo_gateThreshold")) : 3.0,
+            refractoryMs: userDefaults.object(forKey: "tkeo_refractoryPeriod") != nil ? Float(userDefaults.double(forKey: "tkeo_refractoryPeriod")) * 1000 : 150,
+            minWidthMs: userDefaults.object(forKey: "tkeo_minWidthMs") != nil ? Float(userDefaults.double(forKey: "tkeo_minWidthMs")) : 70,
+            maxWidthMs: userDefaults.object(forKey: "tkeo_maxWidthMs") != nil ? Float(userDefaults.double(forKey: "tkeo_maxWidthMs")) : 350,
+            nccThresh: userDefaults.object(forKey: "tkeo_templateConfidence") != nil ? Float(userDefaults.double(forKey: "tkeo_templateConfidence")) : 0.6,
+            windowPreMs: userDefaults.object(forKey: "tkeo_windowPreMs") as? Float ?? windowPreMs,
+            windowPostMs: userDefaults.object(forKey: "tkeo_windowPostMs") as? Float ?? windowPostMs,
+            ignoreStartMs: userDefaults.object(forKey: "tkeo_ignoreStartMs") != nil ? Float(userDefaults.double(forKey: "tkeo_ignoreStartMs")) : 200,
+            ignoreEndMs: userDefaults.object(forKey: "tkeo_ignoreEndMs") != nil ? Float(userDefaults.double(forKey: "tkeo_ignoreEndMs")) : 200,
+            gateRampMs: userDefaults.object(forKey: "tkeo_gateRampMs") != nil ? Float(userDefaults.double(forKey: "tkeo_gateRampMs")) : 0,
+            gyroVetoThresh: userDefaults.object(forKey: "tkeo_gyroVetoThresh") != nil ? Float(userDefaults.double(forKey: "tkeo_gyroVetoThresh")) : 3.0,
+            gyroVetoHoldMs: userDefaults.object(forKey: "tkeo_gyroVetoHoldMs") != nil ? Float(userDefaults.double(forKey: "tkeo_gyroVetoHoldMs")) : 50,
+            preQuietMs: userDefaults.object(forKey: "tkeo_preQuietMs") != nil ? Float(userDefaults.double(forKey: "tkeo_preQuietMs")) : 0
         )
     }
 }
@@ -117,36 +152,43 @@ public final class PinchDetector {
         return PinchConfig(
             fs: sampleRate,
             bandpassLow: 3.0,
-            bandpassHigh: 20.0,
+            bandpassHigh: 20.0,  // 3-20Hz for pinch detection
             accelWeight: 1.0,
             gyroWeight: 1.5,
             madWinSec: 3.0,
-            gateK: 3.5,
+            gateK: 3.0,
             refractoryMs: 150,
-            minWidthMs: 60,
-            maxWidthMs: 400,
+            minWidthMs: 70,
+            maxWidthMs: 350,
             nccThresh: 0.6,
             windowPreMs: 150,
-            windowPostMs: 250
+            windowPostMs: 150,  // Match trained template symmetry
+            ignoreStartMs: 200,  // Much shorter - just true startup
+            ignoreEndMs: 200,   // Much shorter - just true teardown
+            gateRampMs: 0,      // Disable ramp-up  
+            gyroVetoThresh: 3.0, // Much higher threshold
+            gyroVetoHoldMs: 50,  // Much shorter hold
+            preQuietMs: 0       // Disable pre-silence
         )
     }
     
-    public static func createDefaultTemplate() -> PinchTemplate {
-        let templateLength = 40
-        var templateData = [Float](repeating: 0.1, count: templateLength)
+    public static func createDefaultTemplate(fs: Float = 50.0, preMs: Float = 150, postMs: Float = 150) -> PinchTemplate {
+        let preS = Int(round(preMs * fs / 1000))
+        let postS = Int(round(postMs * fs / 1000))
+        let L = preS + postS + 1
         
-        // Create a synthetic pinch template (bell curve)
-        for i in 0..<templateLength {
-            let t = Float(i) / Float(templateLength - 1)
-            templateData[i] = exp(-pow((t - 0.5) * 6, 2))
+        var data = [Float](repeating: 0, count: L)
+        for i in 0..<L {
+            let t = Float(i) / Float(max(L-1, 1))
+            data[i] = exp(-pow((t - 0.5) * 6, 2))
         }
         
         return PinchTemplate(
-            fs: 50.0,
-            preMs: 150.0,
-            postMs: 250.0,
-            vectorLength: templateLength,
-            data: templateData,
+            fs: fs,
+            preMs: preMs,
+            postMs: postMs,
+            vectorLength: L,
+            data: data,
             channelsMeta: "fused_signal",
             version: "1.0"
         )
@@ -161,13 +203,25 @@ public final class PinchDetector {
             return [createDefaultTemplate()]
         }
         
+        // Calculate correct pre/post timing from actual template length
+        let templateLength = templatesArray.first?.count ?? 16
+        let fs: Float = 50.0
+        // Template length = preS + postS + 1, so: preS + postS = templateLength - 1
+        let totalSamples = templateLength - 1  // preS + postS combined
+        let preS = totalSamples / 2
+        let postS = totalSamples - preS  // Handle odd numbers correctly
+        let preMs = Float(preS) / fs * 1000
+        let postMs = Float(postS) / fs * 1000
+        
         print("✅ Loaded \(templatesArray.count) trained templates from JSON")
+        print("📏 Template timing: \(templateLength) samples = \(String(format: "%.0f", preMs + postMs))ms total (\(String(format: "%.0f", preMs))ms + \(String(format: "%.0f", postMs))ms)")
+        
         return templatesArray.enumerated().map { (index, templateDoubles) in
             let templateData = templateDoubles.map { Float($0) }
             return PinchTemplate(
-                fs: 50.0,
-                preMs: 150.0,
-                postMs: 250.0,
+                fs: fs,
+                preMs: preMs,
+                postMs: postMs,
                 vectorLength: templateData.count,
                 data: templateData,
                 channelsMeta: "fused_signal_template_\(index + 1)",
@@ -223,10 +277,12 @@ public final class PinchDetector {
         debugLog("=== STEP 2: TKEO CONFIGURATION ===")
         debugLog("⚙️ Sample rate: \(String(format: "%.0f", config.fs)) Hz")
         debugLog("🔧 Bandpass filter: \(String(format: "%.1f", config.bandpassLow)) - \(String(format: "%.1f", config.bandpassHigh)) Hz")
-        debugLog("🎯 Gate threshold: \(String(format: "%.1f", config.gateK))σ above baseline")
+        debugLog("🎯 Gate threshold: \(String(format: "%.1f", config.gateK))·MAD above baseline")
         debugLog("🔗 Fusion weights: accel=\(String(format: "%.1f", config.accelWeight)), gyro=\(String(format: "%.1f", config.gyroWeight))")
         debugLog("⏰ Refractory period: \(String(format: "%.0f", config.refractoryMs))ms")
-        debugLog("📏 Templates: \(templates.count) loaded, length: \(templates.first?.vectorLength ?? 0) samples (~\(String(format: "%.0f", Float(templates.first?.vectorLength ?? 0) * 1000.0 / config.fs))ms)")
+        let L = templates.first?.vectorLength ?? 0
+        let ms = Float(L - 1) * 1000.0 / config.fs
+        debugLog("📏 Templates: \(templates.count) loaded, length: \(L) samples (~\(String(format: "%.0f", ms))ms)")
         debugLog("🎯 Template confidence (NCC): \(String(format: "%.2f", config.nccThresh))")
         
         debugLog("=== STEP 3: SIGNAL PROCESSING ===")
@@ -253,39 +309,104 @@ public final class PinchDetector {
         debugLog("📈 TKEO peaks - GX:\(String(format: "%.6f", gXT.max() ?? 0)), GY:\(String(format: "%.6f", gYT.max() ?? 0)), GZ:\(String(format: "%.6f", gZT.max() ?? 0))")
         
         // Fuse across axes: L2 norm of positive TKEO values (Python-style)
-        let accelTkeo = fuseL2Positive([aXT, aYT, aZT])
-        let gyroTkeo = fuseL2Positive([gXT, gYT, gZT])
+        var accelTkeo = fuseL2Positive([aXT, aYT, aZT])
+        var gyroTkeo = fuseL2Positive([gXT, gYT, gZT])
         
-        let (accelMedian, accelMad) = baselineMAD(accelTkeo, winSec: config.madWinSec, fs: fs)
-        let (gyroMedian, gyroMad) = baselineMAD(gyroTkeo, winSec: config.madWinSec, fs: fs)
+        // Sanitize TKEO outputs
+        sanitize(&accelTkeo)
+        sanitize(&gyroTkeo)
         
-        var accelNorm = [Float](repeating: 0, count: accelTkeo.count)
-        var gyroNorm = [Float](repeating: 0, count: gyroTkeo.count)
+        let (accelMed, accelMad) = slidingMedianMAD(accelTkeo, winSec: config.madWinSec, fs: fs)
+        let (gyroMed, gyroMad) = slidingMedianMAD(gyroTkeo, winSec: config.madWinSec, fs: fs)
         
-        for i in 0..<accelTkeo.count {
-            if accelMad[i] > 0 {
-                accelNorm[i] = (accelTkeo[i] - accelMedian[i]) / accelMad[i]
-            }
-            if gyroMad[i] > 0 {
-                gyroNorm[i] = (gyroTkeo[i] - gyroMedian[i]) / gyroMad[i]
+        var accelZ = zip(accelTkeo, zip(accelMed, accelMad)).map { (v, mm) in
+            let (m, mad) = mm; return mad > 0 ? (v - m) / mad : 0
+        }
+        var gyroZ = zip(gyroTkeo, zip(gyroMed, gyroMad)).map { (v, mm) in
+            let (m, mad) = mm; return mad > 0 ? (v - m) / mad : 0
+        }
+        
+        sanitize(&accelZ)
+        sanitize(&gyroZ)
+        
+        var fusedSignal = zip(accelZ, gyroZ).map { config.accelWeight*$0 + config.gyroWeight*$1 }
+        sanitize(&fusedSignal)
+        
+        // Add light EMA smoothing to reduce chattery gates on noisier wrists
+        if fusedSignal.count > 1 {
+            let alpha: Float = 0.2
+            for i in 1..<fusedSignal.count {
+                fusedSignal[i] = alpha * fusedSignal[i-1] + (1 - alpha) * fusedSignal[i]
             }
         }
         
-        var fusedSignal = [Float](repeating: 0, count: accelNorm.count)
-        for i in 0..<fusedSignal.count {
-            fusedSignal[i] = config.accelWeight * accelNorm[i] + config.gyroWeight * gyroNorm[i]
+        // Build robust per-sample gate: median + K·MAD (converted to σ scale)
+        let (fMed, fMAD) = slidingMedianMAD(fusedSignal, winSec: config.madWinSec, fs: fs)
+        let madToSigma: Float = 1.4826  // MAD to standard deviation conversion factor
+        var gate = zip(fMed, fMAD).map { (m, md) in m + config.gateK * madToSigma * max(md, 1e-3) }
+        
+        // =============================================================================
+        // BOOKEND SPIKE PROTECTION - Anti-startup/teardown false positives
+        // =============================================================================
+        
+        // 1. Edge ignore windows - Skip detection for first/last periods
+        let ignoreStartS = Int(round(config.ignoreStartMs * fs / 1000))
+        let ignoreEndS   = Int(round(config.ignoreEndMs * fs / 1000))
+        var allow = [Bool](repeating: true, count: fusedSignal.count)
+        for i in 0..<min(ignoreStartS, allow.count) { allow[i] = false }
+        for i in max(0, allow.count - ignoreEndS)..<allow.count { allow[i] = false }
+        
+        debugLog("🛡️ Bookend config - ignoreStartMs: \(config.ignoreStartMs), ignoreEndMs: \(config.ignoreEndMs), fs: \(fs)")
+        debugLog("🛡️ Bookend samples - ignoreStartS: \(ignoreStartS), ignoreEndS: \(ignoreEndS), total samples: \(fusedSignal.count)")
+        
+        // 2. Gross-motion veto using gyro magnitude - Block detection when motion exceeds threshold
+        var gyroMag = [Float](repeating: 0, count: gx.count)
+        for i in 0..<gx.count {
+            gyroMag[i] = sqrt(gx[i]*gx[i] + gy[i]*gy[i] + gz[i]*gz[i])
         }
+        
+        // Motion is OK when gyro magnitude stays BELOW the threshold
+        // config.gyroVetoThresh = 0 means veto everything (max restrictive)  
+        // config.gyroVetoThresh = high means allow more motion (less restrictive)
+        let holdS = max(1, Int(round(config.gyroVetoHoldMs * fs / 1000)))
+        var below = [Bool](repeating: false, count: gyroMag.count)
+        for i in 0..<gyroMag.count { 
+            below[i] = gyroMag[i] <= config.gyroVetoThresh 
+        }
+        var motionOK = [Bool](repeating: false, count: gyroMag.count)
+        var run = 0
+        for i in 0..<below.count {
+            run = below[i] ? (run + 1) : 0
+            motionOK[i] = run >= holdS
+        }
+        
+        // Combine edge and motion masks
+        for i in 0..<allow.count { allow[i] = allow[i] && motionOK[i] }
+        
+        // 3. Gate ramp-up - Fade in gate over first ~1s to prevent early spikes
+        if config.gateRampMs > 0 {
+            let rampS = Int(round(config.gateRampMs * fs / 1000))
+            for i in 0..<min(rampS, gate.count) {
+                let w = 1.0 - Float(i) / Float(max(1, rampS - 1))  // 1 -> 0
+                gate[i] += w * (3.0 * max(fMAD[i], 1e-3))  // add extra cushion that decays
+            }
+        }
+        
+        // Apply motion and edge masks by inflating gate to impossible values
+        var gateMasked = gate
+        for i in 0..<gateMasked.count where !allow[i] { gateMasked[i] = .greatestFiniteMagnitude }
+        
+        let allowedSamples = allow.filter { $0 }.count
+        debugLog("🛡️ Bookend protection - Edge ignore: \(ignoreStartS + ignoreEndS)/\(fusedSignal.count) samples, Motion veto: allowing \(allowedSamples)/\(fusedSignal.count) samples")
         
         let fusedMax = fusedSignal.max() ?? 0
         let fusedMean = fusedSignal.reduce(0, +) / Float(fusedSignal.count)
         let fusedStd = sqrt(fusedSignal.map { pow($0 - fusedMean, 2) }.reduce(0, +) / Float(fusedSignal.count))
         debugLog("🔗 Fusion signal - max:\(String(format: "%.6f", fusedMax)), avg:\(String(format: "%.6f", fusedMean)), std:\(String(format: "%.6f", fusedStd))")
-        debugLog("🚪 Gate threshold: \(String(format: "%.6f", fusedMean + config.gateK * fusedStd)) (μ + \(String(format: "%.1f", config.gateK))σ)")
         
-        let threshold = Array(repeating: config.gateK, count: fusedSignal.count)
-        let peakCandidates = detectPeaks(fusedSignal, thresh: threshold, refractory: config.refractoryMs / 1000.0)
         
-        debugLog("🏔️ Found \(peakCandidates.count) candidate peaks above gate threshold")
+        let peakCandidates = detectPeaks(z: fusedSignal, gate: gateMasked, refractorySec: config.refractoryMs / 1000.0, fs: fs)
+        debugLog("🎯 Candidates: \(peakCandidates.count)")
         
         var pinchEvents: [PinchEvent] = []
         
@@ -299,44 +420,39 @@ public final class PinchDetector {
         
         var templateMatchCount = 0
         
+        // Compute template window parameters from time config
+        let preS = Int(round(config.windowPreMs * fs / 1000))
+        let postS = Int(round(config.windowPostMs * fs / 1000))
+        let windowL = preS + postS + 1
+        
+        // Filter templates to matching length
+        let templatesL = templates.filter { $0.data.count == windowL }
+        guard !templatesL.isEmpty else {
+            debugLog("⚠️ No templates of length \(windowL)")
+            return []
+        }
+        
         for candidate in peakCandidates {
-            let L = templates.first?.vectorLength ?? 0
-            guard L > 0 else { continue }
-            
-            // Preserve pre:post ratio but enforce exact L samples
-            let totalMs = config.windowPreMs + config.windowPostMs
-            let preRatio = totalMs > 0 ? config.windowPreMs / totalMs : 0.5
-            let preSamples = Int(round(Float(L - 1) * preRatio))
-            let postSamples = L - 1 - preSamples
-            
-            var startIdx = max(0, candidate.index - preSamples)
-            var endIdx = min(fusedSignal.count - 1, candidate.index + postSamples)
-            var window = Array(fusedSignal[startIdx...endIdx])
-            
-            // Pad or trim to exactly L samples if near boundaries
-            if window.count < L {
-                let deficit = L - window.count
-                if startIdx == 0 {
-                    let pad = [Float](repeating: fusedSignal.first ?? 0, count: deficit)
-                    window = pad + window
-                } else {
-                    let pad = [Float](repeating: fusedSignal.last ?? 0, count: deficit)
-                    window = window + pad
+            // 4. Pre-silence requirement - Accept candidate only if pre-window has been quiet (if enabled)
+            if config.preQuietMs > 0 {
+                let preQuietS = max(1, Int(round(config.preQuietMs * fs / 1000)))
+                let sQuiet = max(0, candidate.index - preQuietS)
+                let isQuiet = (sQuiet..<candidate.index).allSatisfy { fusedSignal[$0] < gate[$0] * 0.9 }
+                guard isQuiet else { 
+                    continue 
                 }
-            } else if window.count > L {
-                window = Array(window[0..<L])
             }
+            
+            let (window, sIdx, eIdx) = extractWindow(center: candidate.index, from: fusedSignal, preS: preS, postS: postS, L: windowL)
             
             // Try templates to find the best match (with early termination optimization)
             var bestNccScore: Float = 0.0
-            var bestTemplateIndex = -1
             let earlyTerminationThreshold: Float = 0.95 // Stop if we get very high confidence
             
-            for (templateIndex, template) in templates.enumerated() {
+            for (_, template) in templatesL.enumerated() {
                 let nccScore = ncc(window: window, template: template.data)
                 if nccScore > bestNccScore {
                     bestNccScore = nccScore
-                    bestTemplateIndex = templateIndex
                     
                     // Early termination: if we get very high confidence, no need to test remaining templates
                     if nccScore >= earlyTerminationThreshold {
@@ -350,8 +466,8 @@ public final class PinchDetector {
                 
                 let event = PinchEvent(
                     tPeak: t[candidate.index],
-                    tStart: t[startIdx],
-                    tEnd: t[endIdx],
+                    tStart: t[sIdx],
+                    tEnd: t[eIdx],
                     confidence: confidence,
                     gateScore: candidate.value,
                     ncc: bestNccScore
@@ -463,38 +579,89 @@ public final class PinchDetector {
         return result
     }
     
+    // MARK: - Stable RBJ Biquad Filters
+    private struct Biquad {
+        var b0: Float, b1: Float, b2: Float
+        var a1: Float, a2: Float
+        private var x1: Float = 0, x2: Float = 0, y1: Float = 0, y2: Float = 0
+        
+        init(b0: Float, b1: Float, b2: Float, a1: Float, a2: Float) {
+            self.b0 = b0
+            self.b1 = b1
+            self.b2 = b2
+            self.a1 = a1
+            self.a2 = a2
+        }
+        
+        mutating func process(_ x: Float) -> Float {
+            let y = b0*x + b1*x1 + b2*x2 - a1*y1 - a2*y2
+            x2 = x1; x1 = x; y2 = y1; y1 = y
+            return y
+        }
+    }
+    
+    private enum BiquadType { case lowpass, highpass }
+    
+    private func makeRBJBiquad(_ type: BiquadType, fc: Float, Q: Float, fs: Float) -> Biquad {
+        // Clamp fc to (0, fs/2)
+        let f = min(max(fc, 0.001), 0.49*fs)
+        let w0 = 2 * Float.pi * (f / fs)
+        let alpha = sin(w0) / (2 * Q)
+        let cosw0 = cos(w0)
+        
+        var b0: Float = 0, b1: Float = 0, b2: Float = 0
+        var a0: Float = 1, a1: Float = 0, a2: Float = 0
+        
+        switch type {
+        case .lowpass:
+            b0 = (1 - cosw0) / 2; b1 = 1 - cosw0; b2 = (1 - cosw0) / 2
+            a0 = 1 + alpha; a1 = -2 * cosw0; a2 = 1 - alpha
+        case .highpass:
+            b0 = (1 + cosw0) / 2; b1 = -(1 + cosw0); b2 = (1 + cosw0) / 2
+            a0 = 1 + alpha; a1 = -2 * cosw0; a2 = 1 - alpha
+        }
+        
+        // Normalize by a0
+        return Biquad(b0: b0/a0, b1: b1/a0, b2: b2/a0, a1: a1/a0, a2: a2/a0)
+    }
+    
+    private struct BandPass {
+        var hp: Biquad
+        var lp: Biquad
+        mutating func process(_ x: Float) -> Float { lp.process(hp.process(x)) }
+    }
+    
+    private func makeBandPass(fs: Float, low: Float, high: Float) -> BandPass {
+        let Q: Float = 0.707
+        let hp = makeRBJBiquad(.highpass, fc: low, Q: Q, fs: fs)
+        let lp = makeRBJBiquad(.lowpass, fc: high, Q: Q, fs: fs)
+        return BandPass(hp: hp, lp: lp)
+    }
+    
     private func bandpass(_ x: [Float], fs: Float, low: Float, high: Float) -> [Float] {
-        let nyquist = fs / 2.0
-        let lowNorm = low / nyquist
-        let highNorm = high / nyquist
+        guard !x.isEmpty, low > 0, high > low, high < 0.49*fs else { return x }
+        var bp = makeBandPass(fs: fs, low: low, high: high)
+        var y = [Float](repeating: 0, count: x.count)
+        for i in 0..<x.count { y[i] = bp.process(x[i]) }
+        sanitize(&y)
+        return y
+    }
+    
+    private func sanitize(_ x: inout [Float]) {
+        for i in x.indices { if !x[i].isFinite { x[i] = 0 } }
+    }
+    
+    private func extractWindow(center idx: Int, from z: [Float], preS: Int, postS: Int, L: Int) -> (win: [Float], s: Int, e: Int) {
+        let s0 = max(0, idx - preS)
+        let e0 = min(z.count - 1, idx + postS)
+        var w = Array(z[s0...e0])
         
-        guard lowNorm > 0 && highNorm < 1.0 && lowNorm < highNorm else {
-            return x
+        if w.count < L {
+            if s0 == 0 { w = Array(repeating: z.first!, count: L - w.count) + w }
+            if e0 == z.count - 1 { w += Array(repeating: z.last!, count: L - w.count) }
         }
         
-        var output = [Float](repeating: 0, count: x.count)
-        
-        let b0: Float = highNorm - lowNorm
-        let b1: Float = -2.0 * cos(.pi * (highNorm + lowNorm)) * b0
-        let b2: Float = b0
-        
-        let a1: Float = -2.0 * cos(.pi * (highNorm + lowNorm))
-        let a2: Float = 2.0 * cos(.pi * (highNorm - lowNorm)) - 1.0
-        
-        var x1: Float = 0, x2: Float = 0
-        var y1: Float = 0, y2: Float = 0
-        
-        for i in 0..<x.count {
-            let input = x[i]
-            let result = b0 * input + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
-            
-            x2 = x1; x1 = input
-            y2 = y1; y1 = result
-            
-            output[i] = result
-        }
-        
-        return output
+        return (Array(w.prefix(L)), s0, min(e0, s0 + L - 1))
     }
     
     private func tkeo(_ x: [Float]) -> [Float] {
@@ -515,41 +682,43 @@ public final class PinchDetector {
         return y
     }
     
-    private func baselineMAD(_ z: [Float], winSec: Float, fs: Float) -> (median: [Float], mad: [Float]) {
-        let winSamples = Int(winSec * fs)
-        var median = [Float](repeating: 0, count: z.count)
-        var mad = [Float](repeating: 0, count: z.count)
+    private func slidingMedianMAD(_ x: [Float], winSec: Float, fs: Float) -> ([Float], [Float]) {
+        let W = max(3, Int(round(winSec * fs)) | 1) // Odd window
+        var med = [Float](repeating: 0, count: x.count)
+        var mad = [Float](repeating: 0, count: x.count)
         
-        for i in 0..<z.count {
-            let start = max(0, i - winSamples/2)
-            let end = min(z.count, i + winSamples/2)
-            
-            let window = Array(z[start..<end]).sorted()
-            let med = window[window.count / 2]
-            
-            let deviations = window.map { abs($0 - med) }.sorted()
-            let madValue = deviations[deviations.count / 2]
-            
-            median[i] = med
-            mad[i] = madValue
+        for i in 0..<x.count {
+            let a = max(0, i - W/2)
+            let b = min(x.count, i + W/2 + 1)
+            var w = Array(x[a..<b])
+            w.sort()
+            let m = w[w.count/2]
+            var d = w.map { abs($0 - m) }
+            d.sort()
+            let md = d[d.count/2]
+            med[i] = m
+            mad[i] = md
         }
         
-        return (median, mad)
+        return (med, mad)
     }
     
-    private func detectPeaks(_ z: [Float], thresh: [Float], refractory: Float) -> [PeakCandidate] {
+    private func detectPeaks(z: [Float], gate: [Float], refractorySec: Float, fs: Float) -> [PeakCandidate] {
+        let rN = max(1, Int(round(refractorySec * fs)))
         var peaks: [PeakCandidate] = []
-        var lastPeakTime: Float = -refractory
+        var i = 1
         
-        for i in 1..<z.count-1 {
-            let currentTime = Float(i) / config.fs
-            
-            if z[i] > thresh[i] && z[i] > z[i-1] && z[i] > z[i+1] {
-                if currentTime - lastPeakTime >= refractory {
-                    peaks.append(PeakCandidate(index: i, value: z[i]))
-                    lastPeakTime = currentTime
+        while i < z.count - 1 {
+            if z[i-1] <= gate[i-1] && z[i] > gate[i] {
+                var j = i
+                while j + 1 < z.count && z[j+1] >= z[j] { j += 1 }
+                if z[j] > gate[j] {
+                    peaks.append(PeakCandidate(index: j, value: z[j]))
+                    i = j + rN
+                    continue
                 }
             }
+            i += 1
         }
         
         return peaks
@@ -564,7 +733,10 @@ public final class PinchDetector {
         let windowCentered = window.map { $0 - windowMean }
         let templateCentered = template.map { $0 - templateMean }
         
-        let numerator = zip(windowCentered, templateCentered).map(*).reduce(0, +)
+        var numerator: Float = 0
+        for i in 0..<windowCentered.count {
+            numerator += windowCentered[i] * templateCentered[i]
+        }
         
         let windowSumSq = windowCentered.map { $0 * $0 }.reduce(0, +)
         let templateSumSq = templateCentered.map { $0 * $0 }.reduce(0, +)
@@ -584,7 +756,7 @@ public final class PinchDetector {
         debugCallback("🔬 TKEO DEBUG: 🔍 Starting TKEO analysis with \(frames.count) readings")
         
         // Use Python-style per-axis processing (no jerk, no magnitude-first)
-        let (ax, ay, az, gx, gy, gz, fs, t) = preprocessAxes(frames: frames)
+        let (ax, ay, az, gx, gy, gz, fs, _) = preprocessAxes(frames: frames)
         
         // Compute raw signal magnitudes for comparison with Python
         var accelMag = [Float](), gyroMag = [Float]()
@@ -601,22 +773,30 @@ public final class PinchDetector {
         debugCallback("🔬 TKEO DEBUG: 🏃 Accel: mean=\(String(format: "%.3f", accelMean)), max=\(String(format: "%.3f", accelMax)) m/s²")
         debugCallback("🔬 TKEO DEBUG: 🌀 Gyro: mean=\(String(format: "%.3f", gyroMean)), max=\(String(format: "%.3f", gyroMax)) rad/s")
         
-        // Band-pass per axis (no jerk)
-        let aX = bandpass(ax, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
-        let aY = bandpass(ay, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
-        let aZ = bandpass(az, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
+        // Band-pass per axis using stable RBJ biquads
+        var aX = bandpass(ax, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
+        var aY = bandpass(ay, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
+        var aZ = bandpass(az, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
         
-        let gX = bandpass(gx, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
-        let gY = bandpass(gy, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
-        let gZ = bandpass(gz, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
+        var gX = bandpass(gx, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
+        var gY = bandpass(gy, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
+        var gZ = bandpass(gz, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
+        
+        // Sanitize filtered signals
+        sanitize(&aX); sanitize(&aY); sanitize(&aZ)
+        sanitize(&gX); sanitize(&gY); sanitize(&gZ)
         
         // TKEO per axis with positive clamp (Python-style)
         let aXT = tkeo(aX), aYT = tkeo(aY), aZT = tkeo(aZ)
         let gXT = tkeo(gX), gYT = tkeo(gY), gZT = tkeo(gZ)
         
         // Fuse across axes: L2 norm of positive TKEO values (Python-style)
-        let accelTkeo = fuseL2Positive([aXT, aYT, aZT])
-        let gyroTkeo = fuseL2Positive([gXT, gYT, gZT])
+        var accelTkeo = fuseL2Positive([aXT, aYT, aZT])
+        var gyroTkeo = fuseL2Positive([gXT, gYT, gZT])
+        
+        // Sanitize TKEO outputs
+        sanitize(&accelTkeo)
+        sanitize(&gyroTkeo)
         
         let validAccelTkeo = accelTkeo.filter { $0.isFinite }
         let accelTkeoMean = validAccelTkeo.isEmpty ? 0.0 : validAccelTkeo.reduce(0, +) / Float(validAccelTkeo.count)
