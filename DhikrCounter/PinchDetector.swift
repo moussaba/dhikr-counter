@@ -131,49 +131,61 @@ public final class PinchDetector {
         )
     }
     
-    public static func createDefaultTemplate() -> PinchTemplate {
-        let templateLength = 40
-        var templateData = [Float](repeating: 0.1, count: templateLength)
-        
-        // Create a synthetic pinch template (bell curve)
-        for i in 0..<templateLength {
-            let t = Float(i) / Float(templateLength - 1)
-            templateData[i] = exp(-pow((t - 0.5) * 6, 2))
+    public static func createDefaultTemplate(fs: Float = 50.0,
+                                        preMs: Float = 150,
+                                        postMs: Float = 250) -> PinchTemplate {
+        let preS  = Int(round(preMs  * fs / 1000))
+        let postS = Int(round(postMs * fs / 1000))
+        let L = preS + postS + 1
+        var data = [Float](repeating: 0, count: L)
+        for i in 0..<L {
+            let t = Float(i) / Float(max(L-1, 1))
+            data[i] = exp(-pow((t - 0.5) * 6, 2))
         }
-        
-        return PinchTemplate(
-            fs: 50.0,
-            preMs: 150.0,
-            postMs: 250.0,
-            vectorLength: templateLength,
-            data: templateData,
-            channelsMeta: "fused_signal",
-            version: "1.0"
-        )
+        return PinchTemplate(fs: fs, preMs: preMs, postMs: postMs,
+                             vectorLength: L, data: data,
+                             channelsMeta: "fused_signal", version: "1.0")
     }
     
-    public static func loadTrainedTemplates() -> [PinchTemplate] {
+    public static func loadTrainedTemplates(config: PinchConfig? = nil) -> [PinchTemplate] {
         guard let path = Bundle.main.path(forResource: "trained_templates", ofType: "json"),
               let data = NSData(contentsOfFile: path),
               let json = try? JSONSerialization.jsonObject(with: data as Data, options: []) as? [String: Any],
               let templatesArray = json["templates"] as? [[Double]] else {
             print("⚠️ Failed to load trained_templates.json, using synthetic template")
-            return [createDefaultTemplate()]
+            let cfg = config ?? PinchConfig()
+            return [createDefaultTemplate(fs: cfg.fs, preMs: cfg.windowPreMs, postMs: cfg.windowPostMs)]
         }
         
-        print("✅ Loaded \(templatesArray.count) trained templates from JSON")
-        return templatesArray.enumerated().map { (index, templateDoubles) in
+        // Load templates and filter by length if config is provided
+        let cfg = config ?? PinchConfig()
+        let expectedL = Int(round((cfg.windowPreMs + cfg.windowPostMs) * cfg.fs / 1000)) + 1
+        
+        var validTemplates: [PinchTemplate] = []
+        for (index, templateDoubles) in templatesArray.enumerated() {
             let templateData = templateDoubles.map { Float($0) }
-            return PinchTemplate(
-                fs: 50.0,
-                preMs: 150.0,
-                postMs: 250.0,
-                vectorLength: templateData.count,
-                data: templateData,
-                channelsMeta: "fused_signal_template_\(index + 1)",
-                version: "1.0"
-            )
+            if templateData.count == expectedL {
+                validTemplates.append(PinchTemplate(
+                    fs: cfg.fs,
+                    preMs: cfg.windowPreMs,
+                    postMs: cfg.windowPostMs,
+                    vectorLength: templateData.count,
+                    data: templateData,
+                    channelsMeta: "fused_signal_template_\(index + 1)",
+                    version: "1.0"
+                ))
+            } else {
+                print("⚠️ Template \(index + 1) length \(templateData.count) != expected \(expectedL), skipping")
+            }
         }
+        
+        if validTemplates.isEmpty {
+            print("⚠️ No valid templates found, using synthetic template")
+            return [createDefaultTemplate(fs: cfg.fs, preMs: cfg.windowPreMs, postMs: cfg.windowPostMs)]
+        }
+        
+        print("✅ Loaded \(validTemplates.count)/\(templatesArray.count) valid trained templates")
+        return validTemplates
     }
     
     public static func convertSensorReadings(_ readings: [SensorReading]) -> [SensorFrame] {
@@ -556,22 +568,19 @@ public final class PinchDetector {
     }
     
     private func ncc(window: [Float], template: [Float]) -> Float {
-        guard window.count == template.count else { return 0.0 }
-        
-        let windowMean = window.reduce(0, +) / Float(window.count)
-        let templateMean = template.reduce(0, +) / Float(template.count)
-        
-        let windowCentered = window.map { $0 - windowMean }
-        let templateCentered = template.map { $0 - templateMean }
-        
-        let numerator = zip(windowCentered, templateCentered).map(*).reduce(0, +)
-        
-        let windowSumSq = windowCentered.map { $0 * $0 }.reduce(0, +)
-        let templateSumSq = templateCentered.map { $0 * $0 }.reduce(0, +)
-        
-        let denominator = sqrt(windowSumSq * templateSumSq)
-        
-        return denominator > 0 ? numerator / denominator : 0.0
+        guard window.count == template.count else { return 0 }
+        let wMean = window.reduce(0, +) / Float(window.count)
+        let tMean = template.reduce(0, +) / Float(template.count)
+        var num: Float = 0, wss: Float = 0, tss: Float = 0
+        for i in 0..<window.count {
+            let wc = window[i] - wMean
+            let tc = template[i] - tMean
+            num += wc * tc
+            wss += wc * wc
+            tss += tc * tc
+        }
+        let den = sqrt(wss * tss)
+        return den > 0 ? num / den : 0
     }
     
     // Python-style debug processing with detailed logging  
