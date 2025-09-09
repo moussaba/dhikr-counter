@@ -131,25 +131,20 @@ public final class PinchDetector {
         )
     }
     
-    public static func createDefaultTemplate() -> PinchTemplate {
-        let templateLength = 40
-        var templateData = [Float](repeating: 0.1, count: templateLength)
-        
-        // Create a synthetic pinch template (bell curve)
-        for i in 0..<templateLength {
-            let t = Float(i) / Float(templateLength - 1)
-            templateData[i] = exp(-pow((t - 0.5) * 6, 2))
+    public static func createDefaultTemplate(fs: Float = 50.0,
+                                            preMs: Float = 150,
+                                            postMs: Float = 250) -> PinchTemplate {
+        let preS  = Int(round(preMs  * fs / 1000))
+        let postS = Int(round(postMs * fs / 1000))
+        let L = preS + postS + 1
+        var data = [Float](repeating: 0, count: L)
+        for i in 0..<L {
+            let t = Float(i) / Float(max(L-1, 1))
+            data[i] = exp(-pow((t - 0.5) * 6, 2))
         }
-        
-        return PinchTemplate(
-            fs: 50.0,
-            preMs: 150.0,
-            postMs: 250.0,
-            vectorLength: templateLength,
-            data: templateData,
-            channelsMeta: "fused_signal",
-            version: "1.0"
-        )
+        return PinchTemplate(fs: fs, preMs: preMs, postMs: postMs,
+                             vectorLength: L, data: data,
+                             channelsMeta: "fused_signal", version: "1.0")
     }
     
     public static func loadTrainedTemplates() -> [PinchTemplate] {
@@ -256,34 +251,32 @@ public final class PinchDetector {
         let accelTkeo = fuseL2Positive([aXT, aYT, aZT])
         let gyroTkeo = fuseL2Positive([gXT, gYT, gZT])
         
-        let (accelMedian, accelMad) = baselineMAD(accelTkeo, winSec: config.madWinSec, fs: fs)
-        let (gyroMedian, gyroMad) = baselineMAD(gyroTkeo, winSec: config.madWinSec, fs: fs)
+        let (accelMedian, accelMad) = slidingMedianMAD(accelTkeo, winSec: config.madWinSec, fs: fs)
+        let (gyroMedian, gyroMad) = slidingMedianMAD(gyroTkeo, winSec: config.madWinSec, fs: fs)
         
-        var accelNorm = [Float](repeating: 0, count: accelTkeo.count)
-        var gyroNorm = [Float](repeating: 0, count: gyroTkeo.count)
-        
-        for i in 0..<accelTkeo.count {
-            if accelMad[i] > 0 {
-                accelNorm[i] = (accelTkeo[i] - accelMedian[i]) / accelMad[i]
-            }
-            if gyroMad[i] > 0 {
-                gyroNorm[i] = (gyroTkeo[i] - gyroMedian[i]) / gyroMad[i]
-            }
+        var accelZ = zip(accelTkeo, zip(accelMedian, accelMad)).map { (v, mm) in
+            let (m, mad) = mm; return mad > 0 ? (v - m) / mad : 0
+        }
+        var gyroZ  = zip(gyroTkeo,  zip(gyroMedian,  gyroMad)).map { (v, mm) in
+            let (m, mad) = mm; return mad > 0 ? (v - m) / mad : 0
         }
         
-        var fusedSignal = [Float](repeating: 0, count: accelNorm.count)
-        for i in 0..<fusedSignal.count {
-            fusedSignal[i] = config.accelWeight * accelNorm[i] + config.gyroWeight * gyroNorm[i]
-        }
+        sanitize(&accelZ); sanitize(&gyroZ)
         
-        let fusedMax = fusedSignal.max() ?? 0
-        let fusedMean = fusedSignal.reduce(0, +) / Float(fusedSignal.count)
-        let fusedStd = sqrt(fusedSignal.map { pow($0 - fusedMean, 2) }.reduce(0, +) / Float(fusedSignal.count))
+        let fusedSignal = zip(accelZ, gyroZ).map { config.accelWeight*$0 + config.gyroWeight*$1 }
+        var fusedSignalSanitized = fusedSignal
+        sanitize(&fusedSignalSanitized)
+        
+        let (fMed, fMAD) = slidingMedianMAD(fusedSignalSanitized, winSec: config.madWinSec, fs: fs)
+        let gate = zip(fMed, fMAD).map { (m, md) in m + config.gateK * max(md, 1e-6) }
+        
+        let fusedMax = fusedSignalSanitized.max() ?? 0
+        let fusedMean = fusedSignalSanitized.reduce(0, +) / Float(fusedSignalSanitized.count)
+        let fusedStd = sqrt(fusedSignalSanitized.map { pow($0 - fusedMean, 2) }.reduce(0, +) / Float(fusedSignalSanitized.count))
         debugLog("🔗 Fusion signal - max:\(String(format: "%.6f", fusedMax)), avg:\(String(format: "%.6f", fusedMean)), std:\(String(format: "%.6f", fusedStd))")
-        debugLog("🚪 Gate threshold: \(String(format: "%.6f", fusedMean + config.gateK * fusedStd)) (μ + \(String(format: "%.1f", config.gateK))σ)")
+        debugLog("🚪 Gate threshold: sliding median + \(String(format: "%.1f", config.gateK))·MAD")
         
-        let threshold = Array(repeating: config.gateK, count: fusedSignal.count)
-        let peakCandidates = detectPeaks(fusedSignal, thresh: threshold, refractory: config.refractoryMs / 1000.0)
+        let peakCandidates = detectPeaks(z: fusedSignalSanitized, gate: gate, refractorySec: config.refractoryMs / 1000.0, fs: fs)
         
         debugLog("🏔️ Found \(peakCandidates.count) candidate peaks above gate threshold")
         
@@ -299,46 +292,30 @@ public final class PinchDetector {
         
         var templateMatchCount = 0
         
+        let preS  = Int(round(config.windowPreMs  * fs / 1000))
+        let postS = Int(round(config.windowPostMs * fs / 1000))
+        let L     = preS + postS + 1
+        
+        let templatesL = templates.filter { $0.data.count == L }
+        
+        if templatesL.isEmpty {
+            debugLog("⚠️ No templates match required length L=\(L) (preMs=\(config.windowPreMs), postMs=\(config.windowPostMs), fs=\(fs))")
+            return pinchEvents
+        }
+        
         for candidate in peakCandidates {
-            let L = templates.first?.vectorLength ?? 0
-            guard L > 0 else { continue }
+            let (window, sIdx, eIdx) = extractWindow(center: candidate.index, from: fusedSignalSanitized)
             
-            // Preserve pre:post ratio but enforce exact L samples
-            let totalMs = config.windowPreMs + config.windowPostMs
-            let preRatio = totalMs > 0 ? config.windowPreMs / totalMs : 0.5
-            let preSamples = Int(round(Float(L - 1) * preRatio))
-            let postSamples = L - 1 - preSamples
-            
-            var startIdx = max(0, candidate.index - preSamples)
-            var endIdx = min(fusedSignal.count - 1, candidate.index + postSamples)
-            var window = Array(fusedSignal[startIdx...endIdx])
-            
-            // Pad or trim to exactly L samples if near boundaries
-            if window.count < L {
-                let deficit = L - window.count
-                if startIdx == 0 {
-                    let pad = [Float](repeating: fusedSignal.first ?? 0, count: deficit)
-                    window = pad + window
-                } else {
-                    let pad = [Float](repeating: fusedSignal.last ?? 0, count: deficit)
-                    window = window + pad
-                }
-            } else if window.count > L {
-                window = Array(window[0..<L])
-            }
-            
-            // Try templates to find the best match (with early termination optimization)
             var bestNccScore: Float = 0.0
             var bestTemplateIndex = -1
-            let earlyTerminationThreshold: Float = 0.95 // Stop if we get very high confidence
+            let earlyTerminationThreshold: Float = 0.95
             
-            for (templateIndex, template) in templates.enumerated() {
+            for (templateIndex, template) in templatesL.enumerated() {
                 let nccScore = ncc(window: window, template: template.data)
                 if nccScore > bestNccScore {
                     bestNccScore = nccScore
                     bestTemplateIndex = templateIndex
                     
-                    // Early termination: if we get very high confidence, no need to test remaining templates
                     if nccScore >= earlyTerminationThreshold {
                         break
                     }
@@ -350,17 +327,14 @@ public final class PinchDetector {
                 
                 let event = PinchEvent(
                     tPeak: t[candidate.index],
-                    tStart: t[startIdx],
-                    tEnd: t[endIdx],
+                    tStart: t[sIdx],
+                    tEnd: t[eIdx],
                     confidence: confidence,
                     gateScore: candidate.value,
                     ncc: bestNccScore
                 )
                 pinchEvents.append(event)
                 templateMatchCount += 1
-                // Peak passed template matching (details omitted for concise logging)
-            } else {
-                // Peak failed template matching (details omitted for concise logging)  
             }
         }
         
@@ -389,6 +363,21 @@ public final class PinchDetector {
         }
         
         return pinchEvents
+    }
+    
+    private func extractWindow(center idx: Int, from z: [Float]) -> (win: [Float], s: Int, e: Int) {
+        let preS  = Int(round(config.windowPreMs  * config.fs / 1000))
+        let postS = Int(round(config.windowPostMs * config.fs / 1000))
+        let L = preS + postS + 1
+        
+        let s0 = max(0, idx - preS)
+        let e0 = min(z.count - 1, idx + postS)
+        var w = Array(z[s0...e0])
+        if w.count < L {
+            if s0 == 0 { w = Array(repeating: z.first!, count: L - w.count) + w }
+            if e0 == z.count - 1 { w += Array(repeating: z.last!, count: L - w.count) }
+        }
+        return (Array(w.prefix(L)), s0, min(e0, s0 + L - 1))
     }
     
     // Per-axis preprocessing (Python-style)
@@ -464,37 +453,60 @@ public final class PinchDetector {
     }
     
     private func bandpass(_ x: [Float], fs: Float, low: Float, high: Float) -> [Float] {
-        let nyquist = fs / 2.0
-        let lowNorm = low / nyquist
-        let highNorm = high / nyquist
-        
-        guard lowNorm > 0 && highNorm < 1.0 && lowNorm < highNorm else {
-            return x
+        guard !x.isEmpty, low > 0, high > low, high < 0.49*fs else { return x }
+        var filter = makeBandPass(fs: fs, low: low, high: high)
+        var y = [Float](repeating: 0, count: x.count)
+        for i in 0..<x.count { y[i] = filter.process(x[i]) }
+        sanitize(&y)
+        return y
+    }
+    
+    private func sanitize(_ x: inout [Float]) {
+        for i in x.indices { if !x[i].isFinite { x[i] = 0 } }
+    }
+    
+    private struct Biquad {
+        var b0: Float, b1: Float, b2: Float
+        var a1: Float, a2: Float
+        private var x1: Float = 0, x2: Float = 0, y1: Float = 0, y2: Float = 0
+        mutating func process(_ x: Float) -> Float {
+            let y = b0*x + b1*x1 + b2*x2 - a1*y1 - a2*y2
+            x2 = x1; x1 = x; y2 = y1; y1 = y
+            return y
         }
-        
-        var output = [Float](repeating: 0, count: x.count)
-        
-        let b0: Float = highNorm - lowNorm
-        let b1: Float = -2.0 * cos(.pi * (highNorm + lowNorm)) * b0
-        let b2: Float = b0
-        
-        let a1: Float = -2.0 * cos(.pi * (highNorm + lowNorm))
-        let a2: Float = 2.0 * cos(.pi * (highNorm - lowNorm)) - 1.0
-        
-        var x1: Float = 0, x2: Float = 0
-        var y1: Float = 0, y2: Float = 0
-        
-        for i in 0..<x.count {
-            let input = x[i]
-            let result = b0 * input + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
-            
-            x2 = x1; x1 = input
-            y2 = y1; y1 = result
-            
-            output[i] = result
+    }
+    
+    private enum BiquadType { case lowpass, highpass }
+    
+    private func makeRBJBiquad(_ type: BiquadType, fc: Float, Q: Float, fs: Float) -> Biquad {
+        let f = min(max(fc, 0.001), 0.49*fs)
+        let w0 = 2 * Float.pi * (f / fs)
+        let alpha = sin(w0) / (2 * Q)
+        let cosw0 = cos(w0)
+        var b0: Float = 0, b1: Float = 0, b2: Float = 0
+        var a0: Float = 1, a1: Float = 0, a2: Float = 0
+        switch type {
+        case .lowpass:
+            b0 = (1 - cosw0) / 2; b1 = 1 - cosw0; b2 = (1 - cosw0) / 2
+            a0 = 1 + alpha; a1 = -2 * cosw0; a2 = 1 - alpha
+        case .highpass:
+            b0 = (1 + cosw0) / 2; b1 = -(1 + cosw0); b2 = (1 + cosw0) / 2
+            a0 = 1 + alpha; a1 = -2 * cosw0; a2 = 1 - alpha
         }
-        
-        return output
+        return Biquad(b0: b0/a0, b1: b1/a0, b2: b2/a0, a1: a1/a0, a2: a2/a0)
+    }
+    
+    private struct BandPass {
+        var hp: Biquad
+        var lp: Biquad
+        mutating func process(_ x: Float) -> Float { lp.process(hp.process(x)) }
+    }
+    
+    private func makeBandPass(fs: Float, low: Float, high: Float) -> BandPass {
+        let Q: Float = 0.707
+        let hp = makeRBJBiquad(.highpass, fc: low,  Q: Q, fs: fs)
+        let lp = makeRBJBiquad(.lowpass,  fc: high, Q: Q, fs: fs)
+        return BandPass(hp: hp, lp: lp)
     }
     
     private func tkeo(_ x: [Float]) -> [Float] {
@@ -515,43 +527,35 @@ public final class PinchDetector {
         return y
     }
     
-    private func baselineMAD(_ z: [Float], winSec: Float, fs: Float) -> (median: [Float], mad: [Float]) {
-        let winSamples = Int(winSec * fs)
-        var median = [Float](repeating: 0, count: z.count)
-        var mad = [Float](repeating: 0, count: z.count)
-        
-        for i in 0..<z.count {
-            let start = max(0, i - winSamples/2)
-            let end = min(z.count, i + winSamples/2)
-            
-            let window = Array(z[start..<end]).sorted()
-            let med = window[window.count / 2]
-            
-            let deviations = window.map { abs($0 - med) }.sorted()
-            let madValue = deviations[deviations.count / 2]
-            
-            median[i] = med
-            mad[i] = madValue
+    private func slidingMedianMAD(_ x: [Float], winSec: Float, fs: Float) -> ([Float],[Float]) {
+        let W = max(3, Int(round(winSec * fs)) | 1) // odd
+        var med = [Float](repeating: 0, count: x.count)
+        var mad = [Float](repeating: 0, count: x.count)
+        for i in 0..<x.count {
+            let a = max(0, i - W/2), b = min(x.count, i + W/2 + 1)
+            var w = Array(x[a..<b]); w.sort()
+            let m = w[w.count/2]
+            var d = w.map { abs($0 - m) }; d.sort()
+            let md = d[d.count/2]
+            med[i] = m; mad[i] = md
         }
-        
-        return (median, mad)
+        return (med, mad)
     }
     
-    private func detectPeaks(_ z: [Float], thresh: [Float], refractory: Float) -> [PeakCandidate] {
+    private func detectPeaks(z: [Float], gate: [Float], refractorySec: Float, fs: Float) -> [PeakCandidate] {
+        let rN = max(1, Int(round(refractorySec * fs)))
         var peaks: [PeakCandidate] = []
-        var lastPeakTime: Float = -refractory
-        
-        for i in 1..<z.count-1 {
-            let currentTime = Float(i) / config.fs
-            
-            if z[i] > thresh[i] && z[i] > z[i-1] && z[i] > z[i+1] {
-                if currentTime - lastPeakTime >= refractory {
-                    peaks.append(PeakCandidate(index: i, value: z[i]))
-                    lastPeakTime = currentTime
-                }
+        var i = 1
+        while i < z.count - 1 {
+            if z[i-1] <= gate[i-1] && z[i] > gate[i] {
+                var j = i
+                while j + 1 < z.count && z[j+1] >= z[j] { j += 1 }
+                peaks.append(PeakCandidate(index: j, value: z[j]))
+                i = j + rN
+            } else {
+                i += 1
             }
         }
-        
         return peaks
     }
     
@@ -601,7 +605,7 @@ public final class PinchDetector {
         debugCallback("🔬 TKEO DEBUG: 🏃 Accel: mean=\(String(format: "%.3f", accelMean)), max=\(String(format: "%.3f", accelMax)) m/s²")
         debugCallback("🔬 TKEO DEBUG: 🌀 Gyro: mean=\(String(format: "%.3f", gyroMean)), max=\(String(format: "%.3f", gyroMax)) rad/s")
         
-        // Band-pass per axis (no jerk)
+        // Band-pass per axis (no jerk) - using stable RBJ filters
         let aX = bandpass(ax, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
         let aY = bandpass(ay, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
         let aZ = bandpass(az, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
@@ -615,8 +619,12 @@ public final class PinchDetector {
         let gXT = tkeo(gX), gYT = tkeo(gY), gZT = tkeo(gZ)
         
         // Fuse across axes: L2 norm of positive TKEO values (Python-style)
-        let accelTkeo = fuseL2Positive([aXT, aYT, aZT])
-        let gyroTkeo = fuseL2Positive([gXT, gYT, gZT])
+        var accelTkeo = fuseL2Positive([aXT, aYT, aZT])
+        var gyroTkeo = fuseL2Positive([gXT, gYT, gZT])
+        
+        // Sanitize TKEO output
+        sanitize(&accelTkeo)
+        sanitize(&gyroTkeo)
         
         let validAccelTkeo = accelTkeo.filter { $0.isFinite }
         let accelTkeoMean = validAccelTkeo.isEmpty ? 0.0 : validAccelTkeo.reduce(0, +) / Float(validAccelTkeo.count)
