@@ -2086,25 +2086,33 @@ extension TKEODetectionCard {
             let refractoryPeriod = UserDefaults.standard.double(forKey: "tkeo_refractoryPeriod")
             let templateConfidence = UserDefaults.standard.double(forKey: "tkeo_templateConfidence")
             
-            // Create fully configured PinchConfig with all settings
+            // Load all trained templates first to get timing
+            let templates = PinchDetector.loadTrainedTemplates()
+            
+            // Calculate window timing from first template
+            var windowPreMs: Float = 150
+            var windowPostMs: Float = 150
+            if let firstTemplate = templates.first {
+                windowPreMs = firstTemplate.preMs
+                windowPostMs = firstTemplate.postMs
+            }
+            
+            // Create fully configured PinchConfig with template-based timing
             let config = PinchConfig(
                 fs: Float(sampleRate > 0 ? sampleRate : 50.0),
                 bandpassLow: Float(bandpassLow > 0 ? bandpassLow : 3.0),
-                bandpassHigh: Float(bandpassHigh > 0 ? bandpassHigh : 20.0),
+                bandpassHigh: Float(bandpassHigh > 0 ? bandpassHigh : 20.0),  // 3-20Hz for pinch detection
                 accelWeight: Float(accelWeight > 0 ? accelWeight : 1.0),
                 gyroWeight: Float(gyroWeight > 0 ? gyroWeight : 1.5),
                 madWinSec: 3.0,
-                gateK: Float(gateThreshold > 0 ? gateThreshold : 3.5),
+                gateK: Float(gateThreshold > 0 ? gateThreshold : 3.0),
                 refractoryMs: Float(refractoryPeriod > 0 ? refractoryPeriod * 1000 : 150),
-                minWidthMs: 60,
-                maxWidthMs: 400,
+                minWidthMs: 70,
+                maxWidthMs: 350,
                 nccThresh: Float(templateConfidence > 0 ? templateConfidence : 0.6),
-                windowPreMs: 150,
-                windowPostMs: 250
+                windowPreMs: windowPreMs,  // Use template-based timing
+                windowPostMs: windowPostMs  // Use template-based timing
             )
-            
-            // Load all trained templates
-            let templates = PinchDetector.loadTrainedTemplates()
             let detector = PinchDetector(config: config, templates: templates)
             
             await MainActor.run {

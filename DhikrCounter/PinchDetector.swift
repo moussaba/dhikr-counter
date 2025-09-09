@@ -1,5 +1,4 @@
 import Foundation
-import Accelerate
 
 public struct SensorFrame {
     let t: TimeInterval
@@ -58,23 +57,33 @@ public struct PinchConfig {
         self.windowPostMs = windowPostMs
     }
     
-    // Static factory method for creating from UserDefaults
-    public static func fromUserDefaults() -> PinchConfig {
+    // Static factory method for creating from UserDefaults with template-aware timing
+    public static func fromUserDefaults(templates: [PinchTemplate] = []) -> PinchConfig {
         let userDefaults = UserDefaults.standard
+        
+        // Calculate window timing from templates if available
+        var windowPreMs: Float = 150
+        var windowPostMs: Float = 150
+        
+        if let firstTemplate = templates.first {
+            windowPreMs = firstTemplate.preMs
+            windowPostMs = firstTemplate.postMs
+        }
+        
         return PinchConfig(
             fs: userDefaults.object(forKey: "tkeo_sampleRate") as? Float ?? 50.0,
             bandpassLow: userDefaults.object(forKey: "tkeo_bandpassLow") as? Float ?? 3.0,
-            bandpassHigh: userDefaults.object(forKey: "tkeo_bandpassHigh") as? Float ?? 20.0,
+            bandpassHigh: userDefaults.object(forKey: "tkeo_bandpassHigh") as? Float ?? 20.0,  // 3-20Hz for pinch detection
             accelWeight: userDefaults.object(forKey: "tkeo_accelWeight") as? Float ?? 1.0,
             gyroWeight: userDefaults.object(forKey: "tkeo_gyroWeight") as? Float ?? 1.5,
             madWinSec: userDefaults.object(forKey: "tkeo_madWinSec") as? Float ?? 3.0,
-            gateK: userDefaults.object(forKey: "tkeo_gateK") as? Float ?? 3.5,
+            gateK: userDefaults.object(forKey: "tkeo_gateK") as? Float ?? 3.0,
             refractoryMs: userDefaults.object(forKey: "tkeo_refractoryMs") as? Float ?? 150,
-            minWidthMs: userDefaults.object(forKey: "tkeo_minWidthMs") as? Float ?? 60,
-            maxWidthMs: userDefaults.object(forKey: "tkeo_maxWidthMs") as? Float ?? 400,
+            minWidthMs: userDefaults.object(forKey: "tkeo_minWidthMs") as? Float ?? 70,
+            maxWidthMs: userDefaults.object(forKey: "tkeo_maxWidthMs") as? Float ?? 350,
             nccThresh: userDefaults.object(forKey: "tkeo_nccThresh") as? Float ?? 0.6,
-            windowPreMs: userDefaults.object(forKey: "tkeo_windowPreMs") as? Float ?? 150,
-            windowPostMs: userDefaults.object(forKey: "tkeo_windowPostMs") as? Float ?? 250
+            windowPreMs: userDefaults.object(forKey: "tkeo_windowPreMs") as? Float ?? windowPreMs,
+            windowPostMs: userDefaults.object(forKey: "tkeo_windowPostMs") as? Float ?? windowPostMs
         )
     }
 }
@@ -117,21 +126,21 @@ public final class PinchDetector {
         return PinchConfig(
             fs: sampleRate,
             bandpassLow: 3.0,
-            bandpassHigh: 20.0,
+            bandpassHigh: 20.0,  // 3-20Hz for pinch detection
             accelWeight: 1.0,
             gyroWeight: 1.5,
             madWinSec: 3.0,
-            gateK: 3.5,
+            gateK: 3.0,
             refractoryMs: 150,
-            minWidthMs: 60,
-            maxWidthMs: 400,
+            minWidthMs: 70,
+            maxWidthMs: 350,
             nccThresh: 0.6,
             windowPreMs: 150,
-            windowPostMs: 250
+            windowPostMs: 150  // Match trained template symmetry
         )
     }
     
-    public static func createDefaultTemplate(fs: Float = 50.0, preMs: Float = 150, postMs: Float = 250) -> PinchTemplate {
+    public static func createDefaultTemplate(fs: Float = 50.0, preMs: Float = 150, postMs: Float = 150) -> PinchTemplate {
         let preS = Int(round(preMs * fs / 1000))
         let postS = Int(round(postMs * fs / 1000))
         let L = preS + postS + 1
@@ -162,13 +171,25 @@ public final class PinchDetector {
             return [createDefaultTemplate()]
         }
         
+        // Calculate correct pre/post timing from actual template length
+        let templateLength = templatesArray.first?.count ?? 16
+        let fs: Float = 50.0
+        // Template length = preS + postS + 1, so: preS + postS = templateLength - 1
+        let totalSamples = templateLength - 1  // preS + postS combined
+        let preS = totalSamples / 2
+        let postS = totalSamples - preS  // Handle odd numbers correctly
+        let preMs = Float(preS) / fs * 1000
+        let postMs = Float(postS) / fs * 1000
+        
         print("✅ Loaded \(templatesArray.count) trained templates from JSON")
+        print("📏 Template timing: \(templateLength) samples = \(String(format: "%.0f", preMs + postMs))ms total (\(String(format: "%.0f", preMs))ms + \(String(format: "%.0f", postMs))ms)")
+        
         return templatesArray.enumerated().map { (index, templateDoubles) in
             let templateData = templateDoubles.map { Float($0) }
             return PinchTemplate(
-                fs: 50.0,
-                preMs: 150.0,
-                postMs: 250.0,
+                fs: fs,
+                preMs: preMs,
+                postMs: postMs,
                 vectorLength: templateData.count,
                 data: templateData,
                 channelsMeta: "fused_signal_template_\(index + 1)",
@@ -224,10 +245,12 @@ public final class PinchDetector {
         debugLog("=== STEP 2: TKEO CONFIGURATION ===")
         debugLog("⚙️ Sample rate: \(String(format: "%.0f", config.fs)) Hz")
         debugLog("🔧 Bandpass filter: \(String(format: "%.1f", config.bandpassLow)) - \(String(format: "%.1f", config.bandpassHigh)) Hz")
-        debugLog("🎯 Gate threshold: \(String(format: "%.1f", config.gateK))σ above baseline")
+        debugLog("🎯 Gate threshold: \(String(format: "%.1f", config.gateK))·MAD above baseline")
         debugLog("🔗 Fusion weights: accel=\(String(format: "%.1f", config.accelWeight)), gyro=\(String(format: "%.1f", config.gyroWeight))")
         debugLog("⏰ Refractory period: \(String(format: "%.0f", config.refractoryMs))ms")
-        debugLog("📏 Templates: \(templates.count) loaded, length: \(templates.first?.vectorLength ?? 0) samples (~\(String(format: "%.0f", Float(templates.first?.vectorLength ?? 0) * 1000.0 / config.fs))ms)")
+        let L = templates.first?.vectorLength ?? 0
+        let ms = Float(L - 1) * 1000.0 / config.fs
+        debugLog("📏 Templates: \(templates.count) loaded, length: \(L) samples (~\(String(format: "%.0f", ms))ms)")
         debugLog("🎯 Template confidence (NCC): \(String(format: "%.2f", config.nccThresh))")
         
         debugLog("=== STEP 3: SIGNAL PROCESSING ===")
@@ -254,8 +277,8 @@ public final class PinchDetector {
         debugLog("📈 TKEO peaks - GX:\(String(format: "%.6f", gXT.max() ?? 0)), GY:\(String(format: "%.6f", gYT.max() ?? 0)), GZ:\(String(format: "%.6f", gZT.max() ?? 0))")
         
         // Fuse across axes: L2 norm of positive TKEO values (Python-style)
-        let accelTkeo = fuseL2Positive([aXT, aYT, aZT])
-        let gyroTkeo = fuseL2Positive([gXT, gYT, gZT])
+        var accelTkeo = fuseL2Positive([aXT, aYT, aZT])
+        var gyroTkeo = fuseL2Positive([gXT, gYT, gZT])
         
         // Sanitize TKEO outputs
         sanitize(&accelTkeo)
@@ -277,16 +300,27 @@ public final class PinchDetector {
         var fusedSignal = zip(accelZ, gyroZ).map { config.accelWeight*$0 + config.gyroWeight*$1 }
         sanitize(&fusedSignal)
         
-        // Build robust per-sample gate: median + K·MAD
+        // Add light EMA smoothing to reduce chattery gates on noisier wrists
+        if fusedSignal.count > 1 {
+            let alpha: Float = 0.2
+            for i in 1..<fusedSignal.count {
+                fusedSignal[i] = alpha * fusedSignal[i-1] + (1 - alpha) * fusedSignal[i]
+            }
+        }
+        
+        // Build robust per-sample gate: median + K·MAD (converted to σ scale)
         let (fMed, fMAD) = slidingMedianMAD(fusedSignal, winSec: config.madWinSec, fs: fs)
-        let gate = zip(fMed, fMAD).map { (m, md) in m + config.gateK * max(md, 1e-6) }
+        let madToSigma: Float = 1.4826  // MAD to standard deviation conversion factor
+        let gate = zip(fMed, fMAD).map { (m, md) in m + config.gateK * madToSigma * max(md, 1e-3) }
         
         let fusedMax = fusedSignal.max() ?? 0
         let fusedMean = fusedSignal.reduce(0, +) / Float(fusedSignal.count)
         let fusedStd = sqrt(fusedSignal.map { pow($0 - fusedMean, 2) }.reduce(0, +) / Float(fusedSignal.count))
         debugLog("🔗 Fusion signal - max:\(String(format: "%.6f", fusedMax)), avg:\(String(format: "%.6f", fusedMean)), std:\(String(format: "%.6f", fusedStd))")
         
+        
         let peakCandidates = detectPeaks(z: fusedSignal, gate: gate, refractorySec: config.refractoryMs / 1000.0, fs: fs)
+        debugLog("🎯 Candidates: \(peakCandidates.count)")
         
         var pinchEvents: [PinchEvent] = []
         
@@ -303,28 +337,26 @@ public final class PinchDetector {
         // Compute template window parameters from time config
         let preS = Int(round(config.windowPreMs * fs / 1000))
         let postS = Int(round(config.windowPostMs * fs / 1000))
-        let L = preS + postS + 1
+        let windowL = preS + postS + 1
         
         // Filter templates to matching length
-        let templatesL = templates.filter { $0.data.count == L }
+        let templatesL = templates.filter { $0.data.count == windowL }
         guard !templatesL.isEmpty else {
-            debugLog("⚠️ No templates of length \(L)")
+            debugLog("⚠️ No templates of length \(windowL)")
             return []
         }
         
         for candidate in peakCandidates {
-            let (window, sIdx, eIdx) = extractWindow(center: candidate.index, from: fusedSignal, preS: preS, postS: postS, L: L)
+            let (window, sIdx, eIdx) = extractWindow(center: candidate.index, from: fusedSignal, preS: preS, postS: postS, L: windowL)
             
             // Try templates to find the best match (with early termination optimization)
             var bestNccScore: Float = 0.0
-            var bestTemplateIndex = -1
             let earlyTerminationThreshold: Float = 0.95 // Stop if we get very high confidence
             
-            for (templateIndex, template) in templatesL.enumerated() {
+            for (_, template) in templatesL.enumerated() {
                 let nccScore = ncc(window: window, template: template.data)
                 if nccScore > bestNccScore {
                     bestNccScore = nccScore
-                    bestTemplateIndex = templateIndex
                     
                     // Early termination: if we get very high confidence, no need to test remaining templates
                     if nccScore >= earlyTerminationThreshold {
@@ -456,6 +488,14 @@ public final class PinchDetector {
         var b0: Float, b1: Float, b2: Float
         var a1: Float, a2: Float
         private var x1: Float = 0, x2: Float = 0, y1: Float = 0, y2: Float = 0
+        
+        init(b0: Float, b1: Float, b2: Float, a1: Float, a2: Float) {
+            self.b0 = b0
+            self.b1 = b1
+            self.b2 = b2
+            self.a1 = a1
+            self.a2 = a2
+        }
         
         mutating func process(_ x: Float) -> Float {
             let y = b0*x + b1*x1 + b2*x2 - a1*y1 - a2*y2
@@ -620,7 +660,7 @@ public final class PinchDetector {
         debugCallback("🔬 TKEO DEBUG: 🔍 Starting TKEO analysis with \(frames.count) readings")
         
         // Use Python-style per-axis processing (no jerk, no magnitude-first)
-        let (ax, ay, az, gx, gy, gz, fs, t) = preprocessAxes(frames: frames)
+        let (ax, ay, az, gx, gy, gz, fs, _) = preprocessAxes(frames: frames)
         
         // Compute raw signal magnitudes for comparison with Python
         var accelMag = [Float](), gyroMag = [Float]()
