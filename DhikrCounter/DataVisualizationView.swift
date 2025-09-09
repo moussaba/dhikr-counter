@@ -2076,43 +2076,11 @@ extension TKEODetectionCard {
         Task {
             let startTime = CFAbsoluteTimeGetCurrent()
             
-            // Read all configuration from settings
-            let sampleRate = UserDefaults.standard.double(forKey: "tkeo_sampleRate")
-            let bandpassLow = UserDefaults.standard.double(forKey: "tkeo_bandpassLow")
-            let bandpassHigh = UserDefaults.standard.double(forKey: "tkeo_bandpassHigh")
-            let gateThreshold = UserDefaults.standard.double(forKey: "tkeo_gateThreshold")
-            let accelWeight = UserDefaults.standard.double(forKey: "tkeo_accelWeight")
-            let gyroWeight = UserDefaults.standard.double(forKey: "tkeo_gyroWeight")
-            let refractoryPeriod = UserDefaults.standard.double(forKey: "tkeo_refractoryPeriod")
-            let templateConfidence = UserDefaults.standard.double(forKey: "tkeo_templateConfidence")
-            
             // Load all trained templates first to get timing
             let templates = PinchDetector.loadTrainedTemplates()
             
-            // Calculate window timing from first template
-            var windowPreMs: Float = 150
-            var windowPostMs: Float = 150
-            if let firstTemplate = templates.first {
-                windowPreMs = firstTemplate.preMs
-                windowPostMs = firstTemplate.postMs
-            }
-            
-            // Create fully configured PinchConfig with template-based timing
-            let config = PinchConfig(
-                fs: Float(sampleRate > 0 ? sampleRate : 50.0),
-                bandpassLow: Float(bandpassLow > 0 ? bandpassLow : 3.0),
-                bandpassHigh: Float(bandpassHigh > 0 ? bandpassHigh : 20.0),  // 3-20Hz for pinch detection
-                accelWeight: Float(accelWeight > 0 ? accelWeight : 1.0),
-                gyroWeight: Float(gyroWeight > 0 ? gyroWeight : 1.5),
-                madWinSec: 3.0,
-                gateK: Float(gateThreshold > 0 ? gateThreshold : 3.0),
-                refractoryMs: Float(refractoryPeriod > 0 ? refractoryPeriod * 1000 : 150),
-                minWidthMs: 70,
-                maxWidthMs: 350,
-                nccThresh: Float(templateConfidence > 0 ? templateConfidence : 0.6),
-                windowPreMs: windowPreMs,  // Use template-based timing
-                windowPostMs: windowPostMs  // Use template-based timing
-            )
+            // Create fully configured PinchConfig reading all settings from UserDefaults
+            let config = PinchConfig.fromUserDefaults(templates: templates)
             let detector = PinchDetector(config: config, templates: templates)
             
             await MainActor.run {

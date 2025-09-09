@@ -456,6 +456,19 @@ struct SettingsView: View {
     @AppStorage("tkeo_templateConfidence") private var templateConfidence: Double = 0.6
     @AppStorage("tkeo_templateLength") private var templateLength: Double = 40
     
+    // Bookend Spike Protection Parameters
+    @AppStorage("tkeo_ignoreStartMs") private var ignoreStartMs: Double = 200
+    @AppStorage("tkeo_ignoreEndMs") private var ignoreEndMs: Double = 200
+    @AppStorage("tkeo_gateRampMs") private var gateRampMs: Double = 0
+    @AppStorage("tkeo_gyroVetoThresh") private var gyroVetoThresh: Double = 3.0
+    @AppStorage("tkeo_gyroVetoHoldMs") private var gyroVetoHoldMs: Double = 50
+    @AppStorage("tkeo_preQuietMs") private var preQuietMs: Double = 0
+    
+    // Algorithm Tuning Parameters
+    @AppStorage("tkeo_madWinSec") private var madWinSec: Double = 3.0
+    @AppStorage("tkeo_minWidthMs") private var minWidthMs: Double = 70
+    @AppStorage("tkeo_maxWidthMs") private var maxWidthMs: Double = 350
+    
     var body: some View {
         NavigationStack {
             List {
@@ -732,6 +745,210 @@ struct SettingsView: View {
                     .padding(.vertical, 8)
                 }
                 
+                Section("Bookend Spike Protection") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Text("Anti-Startup/Teardown Protection")
+                                    .foregroundColor(.primary)
+                                Text("Prevents false detections from session start/stop motion")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "shield.checkered")
+                                .foregroundColor(.green)
+                        }
+                        .padding(.bottom, 8)
+                        
+                        VStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text("Ignore Start Period")
+                                        .font(.subheadline)
+                                    Spacer()
+                                    Text("\(Int(ignoreStartMs))ms")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                Slider(value: $ignoreStartMs, in: 0...5000, step: 100) {
+                                    Text("Start Period")
+                                } minimumValueLabel: {
+                                    Text("0")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                } maximumValueLabel: {
+                                    Text("5s")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                Text("Skip detection in first X ms of session")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text("Ignore End Period")
+                                        .font(.subheadline)
+                                    Spacer()
+                                    Text("\(Int(ignoreEndMs))ms")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                Slider(value: $ignoreEndMs, in: 0...5000, step: 100) {
+                                    Text("End Period")
+                                } minimumValueLabel: {
+                                    Text("0")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                } maximumValueLabel: {
+                                    Text("5s")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                Text("Skip detection in last X ms of session")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text("Motion Veto Threshold")
+                                        .font(.subheadline)
+                                    Spacer()
+                                    Text("\(String(format: "%.1f", gyroVetoThresh)) rad/s")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                Slider(value: $gyroVetoThresh, in: 0...5.0, step: 0.1) {
+                                    Text("Motion Threshold")
+                                } minimumValueLabel: {
+                                    Text("0")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                } maximumValueLabel: {
+                                    Text("5")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                Text("Disable detection during excessive wrist motion")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 8)
+                    }
+                }
+                
+                Section("Algorithm Tuning") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Text("Advanced Algorithm Parameters")
+                                    .foregroundColor(.primary)
+                                Text("Fine-tune detection algorithm behavior")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "slider.horizontal.3")
+                                .foregroundColor(.orange)
+                        }
+                        .padding(.bottom, 8)
+                        
+                        VStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text("MAD Window")
+                                        .font(.subheadline)
+                                    Spacer()
+                                    Text("\(String(format: "%.1f", madWinSec))s")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                Slider(value: $madWinSec, in: 1.0...10.0, step: 0.5) {
+                                    Text("MAD Window")
+                                } minimumValueLabel: {
+                                    Text("1s")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                } maximumValueLabel: {
+                                    Text("10s")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                Text("Window size for baseline calculation (MAD)")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text("Min Event Width")
+                                        .font(.subheadline)
+                                    Spacer()
+                                    Text("\(Int(minWidthMs))ms")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                Slider(value: $minWidthMs, in: 20...200, step: 10) {
+                                    Text("Min Width")
+                                } minimumValueLabel: {
+                                    Text("20ms")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                } maximumValueLabel: {
+                                    Text("200ms")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                Text("Minimum duration for valid pinch events")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text("Max Event Width")
+                                        .font(.subheadline)
+                                    Spacer()
+                                    Text("\(Int(maxWidthMs))ms")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                Slider(value: $maxWidthMs, in: 200...1000, step: 50) {
+                                    Text("Max Width")
+                                } minimumValueLabel: {
+                                    Text("200ms")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                } maximumValueLabel: {
+                                    Text("1s")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                Text("Maximum duration for valid pinch events")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 8)
+                    }
+                }
+                
                 Section("Quick Presets") {
                     VStack(spacing: 8) {
                         Button("Conservative (Low False Positives)") {
@@ -826,6 +1043,14 @@ struct SettingsView: View {
         refractoryPeriod = 0.2
         templateConfidence = 0.75
         templateLength = 50
+        
+        // Conservative bookend protection - more aggressive filtering
+        ignoreStartMs = 300
+        ignoreEndMs = 300
+        gateRampMs = 0
+        gyroVetoThresh = 2.5
+        gyroVetoHoldMs = 100
+        preQuietMs = 0
     }
     
     private func setDefaultPreset() {
@@ -837,6 +1062,14 @@ struct SettingsView: View {
         refractoryPeriod = 0.15
         templateConfidence = 0.6
         templateLength = 40
+        
+        // Default bookend protection - balanced settings
+        ignoreStartMs = 200
+        ignoreEndMs = 200
+        gateRampMs = 0
+        gyroVetoThresh = 3.0
+        gyroVetoHoldMs = 50
+        preQuietMs = 0
     }
     
     private func setSensitivePreset() {
@@ -848,6 +1081,14 @@ struct SettingsView: View {
         refractoryPeriod = 0.1
         templateConfidence = 0.45
         templateLength = 30
+        
+        // Sensitive bookend protection - minimal filtering
+        ignoreStartMs = 100
+        ignoreEndMs = 100
+        gateRampMs = 0
+        gyroVetoThresh = 4.0
+        gyroVetoHoldMs = 25
+        preQuietMs = 0
     }
 }
 

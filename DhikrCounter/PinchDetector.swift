@@ -26,6 +26,14 @@ public struct PinchConfig {
     let windowPreMs: Float
     let windowPostMs: Float
     
+    // Bookend spike protection parameters
+    let ignoreStartMs: Float
+    let ignoreEndMs: Float
+    let gateRampMs: Float
+    let gyroVetoThresh: Float     // rad/s
+    let gyroVetoHoldMs: Float     // require quiet for this long before enabling
+    let preQuietMs: Float         // pre-silence requirement
+    
     // Convenience initializer with default values to reduce brittleness
     public init(
         fs: Float = 50.0,
@@ -40,7 +48,13 @@ public struct PinchConfig {
         maxWidthMs: Float = 400,
         nccThresh: Float = 0.6,
         windowPreMs: Float = 150,
-        windowPostMs: Float = 250
+        windowPostMs: Float = 250,
+        ignoreStartMs: Float = 500,
+        ignoreEndMs: Float = 500,
+        gateRampMs: Float = 1000,
+        gyroVetoThresh: Float = 1.2,
+        gyroVetoHoldMs: Float = 180,
+        preQuietMs: Float = 150
     ) {
         self.fs = fs
         self.bandpassLow = bandpassLow
@@ -55,6 +69,12 @@ public struct PinchConfig {
         self.nccThresh = nccThresh
         self.windowPreMs = windowPreMs
         self.windowPostMs = windowPostMs
+        self.ignoreStartMs = ignoreStartMs
+        self.ignoreEndMs = ignoreEndMs
+        self.gateRampMs = gateRampMs
+        self.gyroVetoThresh = gyroVetoThresh
+        self.gyroVetoHoldMs = gyroVetoHoldMs
+        self.preQuietMs = preQuietMs
     }
     
     // Static factory method for creating from UserDefaults with template-aware timing
@@ -71,19 +91,25 @@ public struct PinchConfig {
         }
         
         return PinchConfig(
-            fs: userDefaults.object(forKey: "tkeo_sampleRate") as? Float ?? 50.0,
-            bandpassLow: userDefaults.object(forKey: "tkeo_bandpassLow") as? Float ?? 3.0,
-            bandpassHigh: userDefaults.object(forKey: "tkeo_bandpassHigh") as? Float ?? 20.0,  // 3-20Hz for pinch detection
-            accelWeight: userDefaults.object(forKey: "tkeo_accelWeight") as? Float ?? 1.0,
-            gyroWeight: userDefaults.object(forKey: "tkeo_gyroWeight") as? Float ?? 1.5,
-            madWinSec: userDefaults.object(forKey: "tkeo_madWinSec") as? Float ?? 3.0,
-            gateK: userDefaults.object(forKey: "tkeo_gateK") as? Float ?? 3.0,
-            refractoryMs: userDefaults.object(forKey: "tkeo_refractoryMs") as? Float ?? 150,
-            minWidthMs: userDefaults.object(forKey: "tkeo_minWidthMs") as? Float ?? 70,
-            maxWidthMs: userDefaults.object(forKey: "tkeo_maxWidthMs") as? Float ?? 350,
-            nccThresh: userDefaults.object(forKey: "tkeo_nccThresh") as? Float ?? 0.6,
+            fs: userDefaults.object(forKey: "tkeo_sampleRate") != nil ? Float(userDefaults.double(forKey: "tkeo_sampleRate")) : 50.0,
+            bandpassLow: userDefaults.object(forKey: "tkeo_bandpassLow") != nil ? Float(userDefaults.double(forKey: "tkeo_bandpassLow")) : 3.0,
+            bandpassHigh: userDefaults.object(forKey: "tkeo_bandpassHigh") != nil ? Float(userDefaults.double(forKey: "tkeo_bandpassHigh")) : 20.0,
+            accelWeight: userDefaults.object(forKey: "tkeo_accelWeight") != nil ? Float(userDefaults.double(forKey: "tkeo_accelWeight")) : 1.0,
+            gyroWeight: userDefaults.object(forKey: "tkeo_gyroWeight") != nil ? Float(userDefaults.double(forKey: "tkeo_gyroWeight")) : 1.5,
+            madWinSec: userDefaults.object(forKey: "tkeo_madWinSec") != nil ? Float(userDefaults.double(forKey: "tkeo_madWinSec")) : 3.0,
+            gateK: userDefaults.object(forKey: "tkeo_gateThreshold") != nil ? Float(userDefaults.double(forKey: "tkeo_gateThreshold")) : 3.0,
+            refractoryMs: userDefaults.object(forKey: "tkeo_refractoryPeriod") != nil ? Float(userDefaults.double(forKey: "tkeo_refractoryPeriod")) * 1000 : 150,
+            minWidthMs: userDefaults.object(forKey: "tkeo_minWidthMs") != nil ? Float(userDefaults.double(forKey: "tkeo_minWidthMs")) : 70,
+            maxWidthMs: userDefaults.object(forKey: "tkeo_maxWidthMs") != nil ? Float(userDefaults.double(forKey: "tkeo_maxWidthMs")) : 350,
+            nccThresh: userDefaults.object(forKey: "tkeo_templateConfidence") != nil ? Float(userDefaults.double(forKey: "tkeo_templateConfidence")) : 0.6,
             windowPreMs: userDefaults.object(forKey: "tkeo_windowPreMs") as? Float ?? windowPreMs,
-            windowPostMs: userDefaults.object(forKey: "tkeo_windowPostMs") as? Float ?? windowPostMs
+            windowPostMs: userDefaults.object(forKey: "tkeo_windowPostMs") as? Float ?? windowPostMs,
+            ignoreStartMs: userDefaults.object(forKey: "tkeo_ignoreStartMs") != nil ? Float(userDefaults.double(forKey: "tkeo_ignoreStartMs")) : 200,
+            ignoreEndMs: userDefaults.object(forKey: "tkeo_ignoreEndMs") != nil ? Float(userDefaults.double(forKey: "tkeo_ignoreEndMs")) : 200,
+            gateRampMs: userDefaults.object(forKey: "tkeo_gateRampMs") != nil ? Float(userDefaults.double(forKey: "tkeo_gateRampMs")) : 0,
+            gyroVetoThresh: userDefaults.object(forKey: "tkeo_gyroVetoThresh") != nil ? Float(userDefaults.double(forKey: "tkeo_gyroVetoThresh")) : 3.0,
+            gyroVetoHoldMs: userDefaults.object(forKey: "tkeo_gyroVetoHoldMs") != nil ? Float(userDefaults.double(forKey: "tkeo_gyroVetoHoldMs")) : 50,
+            preQuietMs: userDefaults.object(forKey: "tkeo_preQuietMs") != nil ? Float(userDefaults.double(forKey: "tkeo_preQuietMs")) : 0
         )
     }
 }
@@ -136,7 +162,13 @@ public final class PinchDetector {
             maxWidthMs: 350,
             nccThresh: 0.6,
             windowPreMs: 150,
-            windowPostMs: 150  // Match trained template symmetry
+            windowPostMs: 150,  // Match trained template symmetry
+            ignoreStartMs: 200,  // Much shorter - just true startup
+            ignoreEndMs: 200,   // Much shorter - just true teardown
+            gateRampMs: 0,      // Disable ramp-up  
+            gyroVetoThresh: 3.0, // Much higher threshold
+            gyroVetoHoldMs: 50,  // Much shorter hold
+            preQuietMs: 0       // Disable pre-silence
         )
     }
     
@@ -311,7 +343,61 @@ public final class PinchDetector {
         // Build robust per-sample gate: median + K·MAD (converted to σ scale)
         let (fMed, fMAD) = slidingMedianMAD(fusedSignal, winSec: config.madWinSec, fs: fs)
         let madToSigma: Float = 1.4826  // MAD to standard deviation conversion factor
-        let gate = zip(fMed, fMAD).map { (m, md) in m + config.gateK * madToSigma * max(md, 1e-3) }
+        var gate = zip(fMed, fMAD).map { (m, md) in m + config.gateK * madToSigma * max(md, 1e-3) }
+        
+        // =============================================================================
+        // BOOKEND SPIKE PROTECTION - Anti-startup/teardown false positives
+        // =============================================================================
+        
+        // 1. Edge ignore windows - Skip detection for first/last periods
+        let ignoreStartS = Int(round(config.ignoreStartMs * fs / 1000))
+        let ignoreEndS   = Int(round(config.ignoreEndMs * fs / 1000))
+        var allow = [Bool](repeating: true, count: fusedSignal.count)
+        for i in 0..<min(ignoreStartS, allow.count) { allow[i] = false }
+        for i in max(0, allow.count - ignoreEndS)..<allow.count { allow[i] = false }
+        
+        debugLog("🛡️ Bookend config - ignoreStartMs: \(config.ignoreStartMs), ignoreEndMs: \(config.ignoreEndMs), fs: \(fs)")
+        debugLog("🛡️ Bookend samples - ignoreStartS: \(ignoreStartS), ignoreEndS: \(ignoreEndS), total samples: \(fusedSignal.count)")
+        
+        // 2. Gross-motion veto using gyro magnitude - Block detection when motion exceeds threshold
+        var gyroMag = [Float](repeating: 0, count: gx.count)
+        for i in 0..<gx.count {
+            gyroMag[i] = sqrt(gx[i]*gx[i] + gy[i]*gy[i] + gz[i]*gz[i])
+        }
+        
+        // Motion is OK when gyro magnitude stays BELOW the threshold
+        // config.gyroVetoThresh = 0 means veto everything (max restrictive)  
+        // config.gyroVetoThresh = high means allow more motion (less restrictive)
+        let holdS = max(1, Int(round(config.gyroVetoHoldMs * fs / 1000)))
+        var below = [Bool](repeating: false, count: gyroMag.count)
+        for i in 0..<gyroMag.count { 
+            below[i] = gyroMag[i] <= config.gyroVetoThresh 
+        }
+        var motionOK = [Bool](repeating: false, count: gyroMag.count)
+        var run = 0
+        for i in 0..<below.count {
+            run = below[i] ? (run + 1) : 0
+            motionOK[i] = run >= holdS
+        }
+        
+        // Combine edge and motion masks
+        for i in 0..<allow.count { allow[i] = allow[i] && motionOK[i] }
+        
+        // 3. Gate ramp-up - Fade in gate over first ~1s to prevent early spikes
+        if config.gateRampMs > 0 {
+            let rampS = Int(round(config.gateRampMs * fs / 1000))
+            for i in 0..<min(rampS, gate.count) {
+                let w = 1.0 - Float(i) / Float(max(1, rampS - 1))  // 1 -> 0
+                gate[i] += w * (3.0 * max(fMAD[i], 1e-3))  // add extra cushion that decays
+            }
+        }
+        
+        // Apply motion and edge masks by inflating gate to impossible values
+        var gateMasked = gate
+        for i in 0..<gateMasked.count where !allow[i] { gateMasked[i] = .greatestFiniteMagnitude }
+        
+        let allowedSamples = allow.filter { $0 }.count
+        debugLog("🛡️ Bookend protection - Edge ignore: \(ignoreStartS + ignoreEndS)/\(fusedSignal.count) samples, Motion veto: allowing \(allowedSamples)/\(fusedSignal.count) samples")
         
         let fusedMax = fusedSignal.max() ?? 0
         let fusedMean = fusedSignal.reduce(0, +) / Float(fusedSignal.count)
@@ -319,7 +405,7 @@ public final class PinchDetector {
         debugLog("🔗 Fusion signal - max:\(String(format: "%.6f", fusedMax)), avg:\(String(format: "%.6f", fusedMean)), std:\(String(format: "%.6f", fusedStd))")
         
         
-        let peakCandidates = detectPeaks(z: fusedSignal, gate: gate, refractorySec: config.refractoryMs / 1000.0, fs: fs)
+        let peakCandidates = detectPeaks(z: fusedSignal, gate: gateMasked, refractorySec: config.refractoryMs / 1000.0, fs: fs)
         debugLog("🎯 Candidates: \(peakCandidates.count)")
         
         var pinchEvents: [PinchEvent] = []
@@ -347,6 +433,16 @@ public final class PinchDetector {
         }
         
         for candidate in peakCandidates {
+            // 4. Pre-silence requirement - Accept candidate only if pre-window has been quiet (if enabled)
+            if config.preQuietMs > 0 {
+                let preQuietS = max(1, Int(round(config.preQuietMs * fs / 1000)))
+                let sQuiet = max(0, candidate.index - preQuietS)
+                let isQuiet = (sQuiet..<candidate.index).allSatisfy { fusedSignal[$0] < gate[$0] * 0.9 }
+                guard isQuiet else { 
+                    continue 
+                }
+            }
+            
             let (window, sIdx, eIdx) = extractWindow(center: candidate.index, from: fusedSignal, preS: preS, postS: postS, L: windowL)
             
             // Try templates to find the best match (with early termination optimization)
