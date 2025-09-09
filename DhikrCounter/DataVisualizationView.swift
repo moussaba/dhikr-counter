@@ -2109,7 +2109,11 @@ extension TKEODetectionCard {
             
             // Convert and process
             let frames = PinchDetector.convertSensorReadings(sensorData)
-            let events = detector.process(frames: frames)
+            let events = detector.processWithDebugCallback(frames: frames) { debugMessage in
+                Task { @MainActor in
+                    self.addDebugLog(debugMessage)
+                }
+            }
             
             let processingTime = CFAbsoluteTimeGetCurrent() - startTime
             
