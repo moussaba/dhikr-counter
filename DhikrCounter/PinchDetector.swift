@@ -32,7 +32,9 @@ public struct PinchConfig {
     let gateRampMs: Float
     let gyroVetoThresh: Float     // rad/s
     let gyroVetoHoldMs: Float     // require quiet for this long before enabling
+    let amplitudeSurplusThresh: Float  // σ over local MAD baseline required
     let preQuietMs: Float         // pre-silence requirement
+    let isiThresholdMs: Float     // inter-spike interval threshold (ms)
     
     // Convenience initializer with default values to reduce brittleness
     public init(
@@ -54,7 +56,9 @@ public struct PinchConfig {
         gateRampMs: Float = 1000,
         gyroVetoThresh: Float = 1.2,
         gyroVetoHoldMs: Float = 180,
-        preQuietMs: Float = 150
+        amplitudeSurplusThresh: Float = 2.0,
+        preQuietMs: Float = 150,
+        isiThresholdMs: Float = 220
     ) {
         self.fs = fs
         self.bandpassLow = bandpassLow
@@ -74,7 +78,9 @@ public struct PinchConfig {
         self.gateRampMs = gateRampMs
         self.gyroVetoThresh = gyroVetoThresh
         self.gyroVetoHoldMs = gyroVetoHoldMs
+        self.amplitudeSurplusThresh = amplitudeSurplusThresh
         self.preQuietMs = preQuietMs
+        self.isiThresholdMs = isiThresholdMs
     }
     
     // Static factory method for creating from UserDefaults with template-aware timing
@@ -109,7 +115,9 @@ public struct PinchConfig {
             gateRampMs: userDefaults.object(forKey: "tkeo_gateRampMs") != nil ? Float(userDefaults.double(forKey: "tkeo_gateRampMs")) : 0,
             gyroVetoThresh: userDefaults.object(forKey: "tkeo_gyroVetoThresh") != nil ? Float(userDefaults.double(forKey: "tkeo_gyroVetoThresh")) : 3.0,
             gyroVetoHoldMs: userDefaults.object(forKey: "tkeo_gyroVetoHoldMs") != nil ? Float(userDefaults.double(forKey: "tkeo_gyroVetoHoldMs")) : 50,
-            preQuietMs: userDefaults.object(forKey: "tkeo_preQuietMs") != nil ? Float(userDefaults.double(forKey: "tkeo_preQuietMs")) : 0
+            amplitudeSurplusThresh: userDefaults.object(forKey: "tkeo_amplitudeSurplusThresh") != nil ? Float(userDefaults.double(forKey: "tkeo_amplitudeSurplusThresh")) : 2.0,
+            preQuietMs: userDefaults.object(forKey: "tkeo_preQuietMs") != nil ? Float(userDefaults.double(forKey: "tkeo_preQuietMs")) : 0,
+            isiThresholdMs: userDefaults.object(forKey: "tkeo_isiThresholdMs") != nil ? Float(userDefaults.double(forKey: "tkeo_isiThresholdMs")) : 220
         )
     }
 }
@@ -168,6 +176,7 @@ public final class PinchDetector {
             gateRampMs: 0,      // Disable ramp-up  
             gyroVetoThresh: 3.0, // Much higher threshold
             gyroVetoHoldMs: 50,  // Much shorter hold
+            amplitudeSurplusThresh: 2.0, // Default amplitude surplus guard
             preQuietMs: 0       // Disable pre-silence
         )
     }
@@ -261,10 +270,11 @@ public final class PinchDetector {
         gx.reserveCapacity(frames.count); gy.reserveCapacity(frames.count); gz.reserveCapacity(frames.count)
         t.reserveCapacity(frames.count)
         
+        let startTime = frames.first?.t ?? 0.0  // Normalize to session start
         for frame in frames {
             ax.append(frame.ax); ay.append(frame.ay); az.append(frame.az)
             gx.append(frame.gx); gy.append(frame.gy); gz.append(frame.gz)
-            t.append(frame.t)
+            t.append(frame.t - startTime)  // Relative to session start
         }
         
         return (ax, ay, az, gx, gy, gz, config.fs, t)
@@ -294,13 +304,14 @@ public final class PinchDetector {
         var gyroMag = [Float]()
         var t = [TimeInterval]()
         
+        let startTime = frames.first?.t ?? 0.0  // Normalize to session start
         for frame in frames {
             let aMag = sqrt(frame.ax * frame.ax + frame.ay * frame.ay + frame.az * frame.az)
             let gMag = sqrt(frame.gx * frame.gx + frame.gy * frame.gy + frame.gz * frame.gz)
             
             accelMag.append(aMag)
             gyroMag.append(gMag)
-            t.append(frame.t)
+            t.append(frame.t - startTime)  // Relative to session start
         }
         
         return (accelMag, gyroMag, config.fs, t)
@@ -543,8 +554,15 @@ public final class PinchDetector {
         var out: [PinchEvent] = []
         var cur = evs.sorted { $0.tPeak < $1.tPeak }[0]
         for e in evs.dropFirst() {
-            if e.tPeak - cur.tPeak <= gap {
-                if e.confidence > cur.confidence { cur = e }
+            let timeDiff = e.tPeak - cur.tPeak
+            if timeDiff <= gap {
+                // Preserve very strong NCC pairs - don't merge if both are high quality
+                if max(cur.ncc, e.ncc) >= 0.90 {
+                    out.append(cur); cur = e  // Keep both
+                } else {
+                    // Normal merge - keep the higher confidence one
+                    if e.confidence > cur.confidence { cur = e }
+                }
             } else {
                 out.append(cur); cur = e
             }
@@ -580,23 +598,26 @@ public final class PinchDetector {
         sanitize(&gX); sanitize(&gY); sanitize(&gZ)
         log("✅ Zero-phase filtering complete - no causal delay introduced")
 
-        // TKEO
+        // TKEO computation
         var aXT = tkeo(aX), aYT = tkeo(aY), aZT = tkeo(aZ)
         var gXT = tkeo(gX), gYT = tkeo(gY), gZT = tkeo(gZ)
         sanitize(&aXT); sanitize(&aYT); sanitize(&aZT)
         sanitize(&gXT); sanitize(&gYT); sanitize(&gZT)
+        log("⚡ TKEO computed: accel ranges X[\(String(format: "%.2f", aXT.min() ?? 0))-\(String(format: "%.2f", aXT.max() ?? 0))], Y[\(String(format: "%.2f", aYT.min() ?? 0))-\(String(format: "%.2f", aYT.max() ?? 0))], Z[\(String(format: "%.2f", aZT.min() ?? 0))-\(String(format: "%.2f", aZT.max() ?? 0))]")
 
-        // Fuse
+        // L2 fusion of TKEO energies
         var accelTkeo = fuseL2Positive([aXT, aYT, aZT])
         var gyroTkeo  = fuseL2Positive([gXT, gYT, gZT])
         sanitize(&accelTkeo); sanitize(&gyroTkeo)
+        log("🔗 TKEO fusion: accel_L2 range [\(String(format: "%.2f", accelTkeo.min() ?? 0))-\(String(format: "%.2f", accelTkeo.max() ?? 0))], gyro_L2 range [\(String(format: "%.2f", gyroTkeo.min() ?? 0))-\(String(format: "%.2f", gyroTkeo.max() ?? 0))]")
 
-        // Robust z-norm
+        // Robust z-normalization using sliding MAD
         let (aMed, aMAD) = slidingMedianMAD(accelTkeo, winSec: config.madWinSec, fs: fs)
         let (gMed, gMAD) = slidingMedianMAD(gyroTkeo,  winSec: config.madWinSec, fs: fs)
         var accelZ = zip(accelTkeo, zip(aMed, aMAD)).map { (v, mm) in let (m, md) = mm; return md > 0 ? (v - m)/md : 0 }
         var gyroZ = zip(gyroTkeo,  zip(gMed, gMAD)).map { (v, mm) in let (m, md) = mm; return md > 0 ? (v - m)/md : 0 }
         sanitize(&accelZ); sanitize(&gyroZ)
+        log("📊 Z-score ranges: accel [\(String(format: "%.2f", accelZ.min() ?? 0))-\(String(format: "%.2f", accelZ.max() ?? 0))], gyro [\(String(format: "%.2f", gyroZ.min() ?? 0))-\(String(format: "%.2f", gyroZ.max() ?? 0))]")
 
         // Weighted fusion + light EMA smoothing
         var fused = zip(accelZ, gyroZ).map { config.accelWeight*$0 + config.gyroWeight*$1 }
@@ -605,11 +626,13 @@ public final class PinchDetector {
             for i in 1..<fused.count { fused[i] = alpha*fused[i-1] + (1 - alpha)*fused[i] }
         }
         sanitize(&fused)
+        log("⚖️ Fused signal: range [\(String(format: "%.2f", fused.min() ?? 0))-\(String(format: "%.2f", fused.max() ?? 0))], weights: accel=\(config.accelWeight), gyro=\(config.gyroWeight)")
 
-        // Gate = median + K·(MAD→σ)
+        // Adaptive gating threshold = median + K·(MAD→σ)
         let (fMed, fMAD) = slidingMedianMAD(fused, winSec: config.madWinSec, fs: fs)
         let madToSigma: Float = 1.4826
         var gate = zip(fMed, fMAD).map { (m, md) in m + config.gateK * madToSigma * max(md, 1e-3) }
+        log("🚪 Gate threshold: K=\(config.gateK)σ, range [\(String(format: "%.2f", gate.min() ?? 0))-\(String(format: "%.2f", gate.max() ?? 0))], baseline median [\(String(format: "%.2f", fMed.min() ?? 0))-\(String(format: "%.2f", fMed.max() ?? 0))]")
 
         // --- Bookend / motion veto (unchanged logic) ---
         let ignoreStartS = Int(round(config.ignoreStartMs * fs / 1000))
@@ -639,8 +662,9 @@ public final class PinchDetector {
         var gateMasked = gate
         for i in 0..<gateMasked.count where !allow[i] { gateMasked[i] = Float.greatestFiniteMagnitude }
 
-        // Candidates
+        // Peak detection
         let peaks = detectPeaks(z: fused, gate: gateMasked, refractorySec: config.refractoryMs/1000, fs: fs)
+        log("🏔️ Peak detection: \(peaks.count) candidates found, refractory=\(String(format: "%.0f", config.refractoryMs))ms")
 
         // -------- Template expansion & matching (NEW SHARED PART) --------
         log("🔍 === TEMPLATE EXPANSION & MATCHING ===")
@@ -662,7 +686,7 @@ public final class PinchDetector {
 
         // Expand templates with small time warps (±10%) and resample back to L.
         // Tweak the grid if you want more/less coverage vs speed.
-        let warpGrid: [Float] = [0.90, 0.95, 1.00, 1.05, 1.10]
+        let warpGrid: [Float] = [0.95, 1.00, 1.05]  // Tightened for better precision
         var expanded: [[Float]] = []
         expanded.reserveCapacity(rawTemplates.count * warpGrid.count)
 
@@ -689,19 +713,22 @@ public final class PinchDetector {
         }
         log("📈 Total expanded templates: \(expanded.count) (= \(rawTemplates.count) × \(warpGrid.count))")
 
-        // Max ±2-sample shift search around the center to be tolerant to slight misalignment
-        let maxShift = 2
+        // Max ±1-sample shift search for tighter precision (reduced from ±2)
+        let maxShift = 1
         log("↔️ Shift tolerance: ±\(maxShift) samples (±\(String(format: "%.0f", Float(maxShift) * 1000 / fs))ms at \(fs)Hz)")
 
         var events: [PinchEvent] = []
-        let nccThresh = config.nccThresh  // set this to 0.55 in config for your current plan
+        let nccThresh: Float = max(config.nccThresh, 0.65)  // Raised for better precision
         log("🎯 NCC threshold: \(String(format: "%.3f", nccThresh))")
         log("🔍 Processing \(peaks.count) peak candidates...")
-        log("💡 Algorithm improvements active:")
+        log("💡 Precision-focused algorithm improvements:")
         log("   • Zero-phase filtering (eliminates \(String(format: "%.1f", 1000.0/(2*fs)))ms phase lag)")
-        log("   • Multi-scale templates (\(warpGrid.count) time warps per template)")
-        log("   • ±\(maxShift) sample shift tolerance") 
-        log("   • Near-duplicate merging (gap≥\(String(format: "%.0f", max(config.refractoryMs, 180)))ms)")
+        log("   • Multi-scale templates (\(warpGrid.count) tightened warps per template)")
+        log("   • ±\(maxShift) sample shift tolerance (tightened from ±2)")
+        log("   • Amplitude surplus guard (≥\(String(format: "%.1f", config.amplitudeSurplusThresh))σ over local MAD)")
+        log("   • ISI guard (<\(String(format: "%.0f", config.isiThresholdMs))ms unless NCC≥0.90)")
+        let mergeGapMs = max(config.isiThresholdMs, 180)  // consistent with ISI, min 180ms
+        log("   • Near-duplicate merging (gap≥\(String(format: "%.0f", mergeGapMs))ms, preserve strong NCC≥0.90)")
 
         var candidateDetails: [String] = []
         for (pkIdx, pk) in peaks.enumerated() {
@@ -748,10 +775,26 @@ public final class PinchDetector {
             let scale = scaleIdx >= 0 ? warpGrid[scaleIdx] : 1.0
             
             if bestNCC >= nccThresh {
-                // Confidence: blend NCC + local amplitude surplus over gate
+                // Amplitude surplus guard: require configurable σ over local MAD baseline
                 let surplus = max(0, pk.value - gate[pk.index])
-                let localScale = max(1e-6, fMAD[pk.index])
-                let ampScore = min(surplus / (3 * localScale), 1.0)
+                let localMAD = max(1e-6, fMAD[pk.index])
+                
+                guard surplus >= config.amplitudeSurplusThresh * localMAD else {
+                    candidateDetails.append("Peak[\(pkIdx)] @ \(String(format: "%.3f", t[pk.index]))s: ❌ REJECTED - insufficient amplitude surplus (\(String(format: "%.2f", surplus/localMAD))σ < \(String(format: "%.1f", config.amplitudeSurplusThresh))σ)")
+                    continue
+                }
+                
+                // Inter-spike interval guard: reject if too close to previous event (unless very high NCC)
+                if let lastEvent = events.last {
+                    let timeSinceLast = t[pk.index] - lastEvent.tPeak
+                    if timeSinceLast < Double(config.isiThresholdMs / 1000.0) && bestNCC < 0.90 {
+                        candidateDetails.append("Peak[\(pkIdx)] @ \(String(format: "%.3f", t[pk.index]))s: ❌ REJECTED - ISI too short (\(String(format: "%.0f", timeSinceLast*1000))ms < \(String(format: "%.0f", config.isiThresholdMs))ms, NCC=\(String(format: "%.3f", bestNCC)) < 0.90)")
+                        continue
+                    }
+                }
+
+                // Confidence: blend NCC + amplitude surplus 
+                let ampScore = min(surplus / (3.0 * localMAD), 1.0)
                 let conf = 0.6 * bestNCC + 0.4 * ampScore
 
                 events.append(PinchEvent(tPeak: t[pk.index],
@@ -761,7 +804,7 @@ public final class PinchDetector {
                                          gateScore: pk.value,
                                          ncc: bestNCC))
                 
-                candidateDetails.append("Peak[\(pkIdx)] @ \(String(format: "%.3f", t[pk.index]))s: ✅ ACCEPTED - NCC=\(String(format: "%.3f", bestNCC)), tpl[\(originalTplIdx)], scale=\(String(format: "%.2f", scale)), shift=\(bestShift), comps=\(totalComparisons)\(earlyStop ? " (early)" : "")")
+                candidateDetails.append("Peak[\(pkIdx)] @ \(String(format: "%.3f", t[pk.index]))s: ✅ ACCEPTED - NCC=\(String(format: "%.3f", bestNCC)), tpl[\(originalTplIdx)], scale=\(String(format: "%.2f", scale)), shift=\(bestShift), surplus=\(String(format: "%.2f", surplus/localMAD))σ, comps=\(totalComparisons)\(earlyStop ? " (early)" : "")")
             } else {
                 candidateDetails.append("Peak[\(pkIdx)] @ \(String(format: "%.3f", t[pk.index]))s: ❌ REJECTED - NCC=\(String(format: "%.3f", bestNCC)) < \(String(format: "%.3f", nccThresh)), best: tpl[\(originalTplIdx)], scale=\(String(format: "%.2f", scale)), shift=\(bestShift)")
             }
@@ -774,16 +817,15 @@ public final class PinchDetector {
 
         log("📊 Pre-merge results: \(events.count) events passed template matching")
 
-        // Apply mergeNear to prevent duplicate events
-        let minGap = max(config.refractoryMs, 180)
-        let mergedEvents = mergeNear(events, minGapMs: minGap)
+        // Apply mergeNear to prevent duplicate events (consistent with ISI threshold)
+        let mergedEvents = mergeNear(events, minGapMs: mergeGapMs)
         
         if events.count != mergedEvents.count {
-            log("🔄 Merge near-duplicates: \(events.count) → \(mergedEvents.count) (gap=\(String(format: "%.0f", minGap))ms)")
+            log("🔄 Merge near-duplicates: \(events.count) → \(mergedEvents.count) (gap=\(String(format: "%.0f", mergeGapMs))ms)")
             log("📋 Original events: \(events.map { String(format: "%.3f", $0.tPeak) }.joined(separator: ", "))s")
             log("📋 Merged events: \(mergedEvents.map { String(format: "%.3f", $0.tPeak) }.joined(separator: ", "))s")
         } else {
-            log("✨ No duplicates to merge (gap=\(String(format: "%.0f", minGap))ms)")
+            log("✨ No duplicates to merge (gap=\(String(format: "%.0f", mergeGapMs))ms)")
         }
 
         let dt = (CFAbsoluteTimeGetCurrent() - t0) * 1000

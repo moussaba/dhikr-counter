@@ -2100,12 +2100,7 @@ extension TKEODetectionCard {
                 self.addDebugLog("📋 Template matching: \(templates.count) trained templates loaded")
             }
             
-            // Set up debug logging
-            detector.setDebugLogger { message in
-                Task { @MainActor in
-                    self.addDebugLog(message)
-                }
-            }
+            // Debug logging handled by processWithDebugCallback below
             
             // Convert and process
             let frames = PinchDetector.convertSensorReadings(sensorData)
@@ -2159,9 +2154,9 @@ extension TKEODetectionCard {
         debugLogs.append(message)
         print("🔬 TKEO DEBUG: \(message)")
         
-        // Keep only last 50 logs
-        if debugLogs.count > 50 {
-            debugLogs.removeFirst(debugLogs.count - 50)
+        // Keep only last 1000 logs to prevent memory issues but allow comprehensive debugging
+        if debugLogs.count > 1000 {
+            debugLogs.removeFirst(debugLogs.count - 1000)
         }
     }
     
@@ -2771,8 +2766,8 @@ struct TKEOAnalysisPlotView: View {
     }
     
     private func normalizedEventTime(_ tPeak: Double) -> Double {
-        // Now events use motionTimestamp directly, same as chart data
-        return tPeak - timeStart
+        // Events are already normalized to session start in PinchDetector
+        return tPeak
     }
     
     private var accelMagnitudeData: [(time: Double, value: Double)] {
