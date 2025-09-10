@@ -454,6 +454,8 @@ struct SettingsView: View {
     @AppStorage("tkeo_gyroWeight") private var gyroWeight: Double = 1.5
     @AppStorage("tkeo_refractoryPeriod") private var refractoryPeriod: Double = 0.15
     @AppStorage("tkeo_templateConfidence") private var templateConfidence: Double = 0.6
+    @AppStorage("tkeo_amplitudeSurplusThresh") private var amplitudeSurplusThresh: Double = 2.0
+    @AppStorage("tkeo_isiThresholdMs") private var isiThresholdMs: Double = 220
     @AppStorage("tkeo_templateLength") private var templateLength: Double = 40
     
     // Bookend Spike Protection Parameters
@@ -620,6 +622,60 @@ struct SettingsView: View {
                             }
                             
                             Text("Higher = more strict template matching (NCC threshold)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("Amplitude Surplus Threshold")
+                                    .font(.subheadline)
+                                Spacer()
+                                Text("\(String(format: "%.1f", amplitudeSurplusThresh))σ")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Slider(value: $amplitudeSurplusThresh, in: 0.1...5.0, step: 0.1) {
+                                Text("Amplitude Surplus Threshold")
+                            } minimumValueLabel: {
+                                Text("0.1")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            } maximumValueLabel: {
+                                Text("5.0")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Text("Minimum energy above baseline (2.0 = good balance, higher = more strict)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("ISI Threshold")
+                                    .font(.subheadline)
+                                Spacer()
+                                Text("\(String(format: "%.0f", isiThresholdMs))ms")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Slider(value: $isiThresholdMs, in: 100...300, step: 10) {
+                                Text("ISI Threshold")
+                            } minimumValueLabel: {
+                                Text("100")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            } maximumValueLabel: {
+                                Text("300")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Text("Inter-spike interval minimum (220ms = good balance, lower = allow closer events)")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
