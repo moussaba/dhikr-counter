@@ -32,7 +32,9 @@ public struct PinchConfig {
     let gateRampMs: Float
     let gyroVetoThresh: Float     // rad/s
     let gyroVetoHoldMs: Float     // require quiet for this long before enabling
+    let amplitudeSurplusThresh: Float  // σ over local MAD baseline required
     let preQuietMs: Float         // pre-silence requirement
+    let isiThresholdMs: Float     // inter-spike interval threshold (ms)
     
     // Convenience initializer with default values to reduce brittleness
     public init(
@@ -46,7 +48,7 @@ public struct PinchConfig {
         refractoryMs: Float = 150,
         minWidthMs: Float = 60,
         maxWidthMs: Float = 400,
-        nccThresh: Float = 0.6,
+        nccThresh: Float = 0.55,
         windowPreMs: Float = 150,
         windowPostMs: Float = 250,
         ignoreStartMs: Float = 500,
@@ -54,7 +56,9 @@ public struct PinchConfig {
         gateRampMs: Float = 1000,
         gyroVetoThresh: Float = 1.2,
         gyroVetoHoldMs: Float = 180,
-        preQuietMs: Float = 150
+        amplitudeSurplusThresh: Float = 2.0,
+        preQuietMs: Float = 150,
+        isiThresholdMs: Float = 220
     ) {
         self.fs = fs
         self.bandpassLow = bandpassLow
@@ -74,7 +78,9 @@ public struct PinchConfig {
         self.gateRampMs = gateRampMs
         self.gyroVetoThresh = gyroVetoThresh
         self.gyroVetoHoldMs = gyroVetoHoldMs
+        self.amplitudeSurplusThresh = amplitudeSurplusThresh
         self.preQuietMs = preQuietMs
+        self.isiThresholdMs = isiThresholdMs
     }
     
     // Static factory method for creating from UserDefaults with template-aware timing
@@ -109,7 +115,9 @@ public struct PinchConfig {
             gateRampMs: userDefaults.object(forKey: "tkeo_gateRampMs") != nil ? Float(userDefaults.double(forKey: "tkeo_gateRampMs")) : 0,
             gyroVetoThresh: userDefaults.object(forKey: "tkeo_gyroVetoThresh") != nil ? Float(userDefaults.double(forKey: "tkeo_gyroVetoThresh")) : 3.0,
             gyroVetoHoldMs: userDefaults.object(forKey: "tkeo_gyroVetoHoldMs") != nil ? Float(userDefaults.double(forKey: "tkeo_gyroVetoHoldMs")) : 50,
-            preQuietMs: userDefaults.object(forKey: "tkeo_preQuietMs") != nil ? Float(userDefaults.double(forKey: "tkeo_preQuietMs")) : 0
+            amplitudeSurplusThresh: userDefaults.object(forKey: "tkeo_amplitudeSurplusThresh") != nil ? Float(userDefaults.double(forKey: "tkeo_amplitudeSurplusThresh")) : 2.0,
+            preQuietMs: userDefaults.object(forKey: "tkeo_preQuietMs") != nil ? Float(userDefaults.double(forKey: "tkeo_preQuietMs")) : 0,
+            isiThresholdMs: userDefaults.object(forKey: "tkeo_isiThresholdMs") != nil ? Float(userDefaults.double(forKey: "tkeo_isiThresholdMs")) : 220
         )
     }
 }
@@ -160,7 +168,7 @@ public final class PinchDetector {
             refractoryMs: 150,
             minWidthMs: 70,
             maxWidthMs: 350,
-            nccThresh: 0.6,
+            nccThresh: 0.55,
             windowPreMs: 150,
             windowPostMs: 150,  // Match trained template symmetry
             ignoreStartMs: 200,  // Much shorter - just true startup
@@ -168,6 +176,7 @@ public final class PinchDetector {
             gateRampMs: 0,      // Disable ramp-up  
             gyroVetoThresh: 3.0, // Much higher threshold
             gyroVetoHoldMs: 50,  // Much shorter hold
+            amplitudeSurplusThresh: 2.0, // Default amplitude surplus guard
             preQuietMs: 0       // Disable pre-silence
         )
     }
@@ -244,267 +253,9 @@ public final class PinchDetector {
         }
     }
     
+    @discardableResult
     func process(frames: [SensorFrame]) -> [PinchEvent] {
-        guard !frames.isEmpty else { return [] }
-        
-        let startTime = CFAbsoluteTimeGetCurrent()
-        
-        // Step 1: Data Quality Analysis
-        debugLog("=== STEP 1: DATA QUALITY ANALYSIS ===")
-        debugLog("📊 Total readings: \(frames.count)")
-        
-        // Analyze sensor data ranges
-        let axValues = frames.map { $0.ax }
-        let ayValues = frames.map { $0.ay }
-        let azValues = frames.map { $0.az }
-        let gxValues = frames.map { $0.gx }
-        let gyValues = frames.map { $0.gy }
-        let gzValues = frames.map { $0.gz }
-        
-        debugLog("📏 Accel X: min=\(String(format: "%.3f", axValues.min() ?? 0)), max=\(String(format: "%.3f", axValues.max() ?? 0))")
-        debugLog("📏 Accel Y: min=\(String(format: "%.3f", ayValues.min() ?? 0)), max=\(String(format: "%.3f", ayValues.max() ?? 0))")
-        debugLog("📏 Accel Z: min=\(String(format: "%.3f", azValues.min() ?? 0)), max=\(String(format: "%.3f", azValues.max() ?? 0))")
-        debugLog("🌀 Gyro X: min=\(String(format: "%.3f", gxValues.min() ?? 0)), max=\(String(format: "%.3f", gxValues.max() ?? 0))")
-        debugLog("🌀 Gyro Y: min=\(String(format: "%.3f", gyValues.min() ?? 0)), max=\(String(format: "%.3f", gyValues.max() ?? 0))")
-        debugLog("🌀 Gyro Z: min=\(String(format: "%.3f", gzValues.min() ?? 0)), max=\(String(format: "%.3f", gzValues.max() ?? 0))")
-        
-        let avgAccelMag = frames.map { sqrt($0.ax*$0.ax + $0.ay*$0.ay + $0.az*$0.az) }.reduce(0, +) / Float(frames.count)
-        let avgGyroMag = frames.map { sqrt($0.gx*$0.gx + $0.gy*$0.gy + $0.gz*$0.gz) }.reduce(0, +) / Float(frames.count)
-        debugLog("📊 Avg accel magnitude: \(String(format: "%.4f", avgAccelMag)) m/s²")
-        debugLog("📊 Avg gyro magnitude: \(String(format: "%.4f", avgGyroMag)) rad/s")
-        
-        // Step 2: TKEO Configuration
-        debugLog("=== STEP 2: TKEO CONFIGURATION ===")
-        debugLog("⚙️ Sample rate: \(String(format: "%.0f", config.fs)) Hz")
-        debugLog("🔧 Bandpass filter: \(String(format: "%.1f", config.bandpassLow)) - \(String(format: "%.1f", config.bandpassHigh)) Hz")
-        debugLog("🎯 Gate threshold: \(String(format: "%.1f", config.gateK))·MAD above baseline")
-        debugLog("🔗 Fusion weights: accel=\(String(format: "%.1f", config.accelWeight)), gyro=\(String(format: "%.1f", config.gyroWeight))")
-        debugLog("⏰ Refractory period: \(String(format: "%.0f", config.refractoryMs))ms")
-        let L = templates.first?.vectorLength ?? 0
-        let ms = Float(L - 1) * 1000.0 / config.fs
-        debugLog("📏 Templates: \(templates.count) loaded, length: \(L) samples (~\(String(format: "%.0f", ms))ms)")
-        debugLog("🎯 Template confidence (NCC): \(String(format: "%.2f", config.nccThresh))")
-        
-        debugLog("=== STEP 3: SIGNAL PROCESSING ===")
-        debugLog("🔄 Converting sensor readings to analysis format...")
-        
-        // Use Python-style per-axis processing (no jerk, no magnitude-first)
-        let (ax, ay, az, gx, gy, gz, fs, t) = preprocessAxes(frames: frames)
-        
-        // Band-pass per axis (no jerk)
-        let aX = bandpass(ax, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
-        let aY = bandpass(ay, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
-        let aZ = bandpass(az, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
-        
-        let gX = bandpass(gx, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
-        let gY = bandpass(gy, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
-        let gZ = bandpass(gz, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
-        
-        // TKEO per axis with positive clamp (Python-style)
-        let aXT = tkeo(aX), aYT = tkeo(aY), aZT = tkeo(aZ)
-        let gXT = tkeo(gX), gYT = tkeo(gY), gZT = tkeo(gZ)
-        
-        debugLog("⚡ TKEO computed for \(frames.count) samples")
-        debugLog("📈 TKEO peaks - AX:\(String(format: "%.6f", aXT.max() ?? 0)), AY:\(String(format: "%.6f", aYT.max() ?? 0)), AZ:\(String(format: "%.6f", aZT.max() ?? 0))")
-        debugLog("📈 TKEO peaks - GX:\(String(format: "%.6f", gXT.max() ?? 0)), GY:\(String(format: "%.6f", gYT.max() ?? 0)), GZ:\(String(format: "%.6f", gZT.max() ?? 0))")
-        
-        // Fuse across axes: L2 norm of positive TKEO values (Python-style)
-        var accelTkeo = fuseL2Positive([aXT, aYT, aZT])
-        var gyroTkeo = fuseL2Positive([gXT, gYT, gZT])
-        
-        // Sanitize TKEO outputs
-        sanitize(&accelTkeo)
-        sanitize(&gyroTkeo)
-        
-        let (accelMed, accelMad) = slidingMedianMAD(accelTkeo, winSec: config.madWinSec, fs: fs)
-        let (gyroMed, gyroMad) = slidingMedianMAD(gyroTkeo, winSec: config.madWinSec, fs: fs)
-        
-        var accelZ = zip(accelTkeo, zip(accelMed, accelMad)).map { (v, mm) in
-            let (m, mad) = mm; return mad > 0 ? (v - m) / mad : 0
-        }
-        var gyroZ = zip(gyroTkeo, zip(gyroMed, gyroMad)).map { (v, mm) in
-            let (m, mad) = mm; return mad > 0 ? (v - m) / mad : 0
-        }
-        
-        sanitize(&accelZ)
-        sanitize(&gyroZ)
-        
-        var fusedSignal = zip(accelZ, gyroZ).map { config.accelWeight*$0 + config.gyroWeight*$1 }
-        sanitize(&fusedSignal)
-        
-        // Add light EMA smoothing to reduce chattery gates on noisier wrists
-        if fusedSignal.count > 1 {
-            let alpha: Float = 0.2
-            for i in 1..<fusedSignal.count {
-                fusedSignal[i] = alpha * fusedSignal[i-1] + (1 - alpha) * fusedSignal[i]
-            }
-        }
-        
-        // Build robust per-sample gate: median + K·MAD (converted to σ scale)
-        let (fMed, fMAD) = slidingMedianMAD(fusedSignal, winSec: config.madWinSec, fs: fs)
-        let madToSigma: Float = 1.4826  // MAD to standard deviation conversion factor
-        var gate = zip(fMed, fMAD).map { (m, md) in m + config.gateK * madToSigma * max(md, 1e-3) }
-        
-        // =============================================================================
-        // BOOKEND SPIKE PROTECTION - Anti-startup/teardown false positives
-        // =============================================================================
-        
-        // 1. Edge ignore windows - Skip detection for first/last periods
-        let ignoreStartS = Int(round(config.ignoreStartMs * fs / 1000))
-        let ignoreEndS   = Int(round(config.ignoreEndMs * fs / 1000))
-        var allow = [Bool](repeating: true, count: fusedSignal.count)
-        for i in 0..<min(ignoreStartS, allow.count) { allow[i] = false }
-        for i in max(0, allow.count - ignoreEndS)..<allow.count { allow[i] = false }
-        
-        debugLog("🛡️ Bookend config - ignoreStartMs: \(config.ignoreStartMs), ignoreEndMs: \(config.ignoreEndMs), fs: \(fs)")
-        debugLog("🛡️ Bookend samples - ignoreStartS: \(ignoreStartS), ignoreEndS: \(ignoreEndS), total samples: \(fusedSignal.count)")
-        
-        // 2. Gross-motion veto using gyro magnitude - Block detection when motion exceeds threshold
-        var gyroMag = [Float](repeating: 0, count: gx.count)
-        for i in 0..<gx.count {
-            gyroMag[i] = sqrt(gx[i]*gx[i] + gy[i]*gy[i] + gz[i]*gz[i])
-        }
-        
-        // Motion is OK when gyro magnitude stays BELOW the threshold
-        // config.gyroVetoThresh = 0 means veto everything (max restrictive)  
-        // config.gyroVetoThresh = high means allow more motion (less restrictive)
-        let holdS = max(1, Int(round(config.gyroVetoHoldMs * fs / 1000)))
-        var below = [Bool](repeating: false, count: gyroMag.count)
-        for i in 0..<gyroMag.count { 
-            below[i] = gyroMag[i] <= config.gyroVetoThresh 
-        }
-        var motionOK = [Bool](repeating: false, count: gyroMag.count)
-        var run = 0
-        for i in 0..<below.count {
-            run = below[i] ? (run + 1) : 0
-            motionOK[i] = run >= holdS
-        }
-        
-        // Combine edge and motion masks
-        for i in 0..<allow.count { allow[i] = allow[i] && motionOK[i] }
-        
-        // 3. Gate ramp-up - Fade in gate over first ~1s to prevent early spikes
-        if config.gateRampMs > 0 {
-            let rampS = Int(round(config.gateRampMs * fs / 1000))
-            for i in 0..<min(rampS, gate.count) {
-                let w = 1.0 - Float(i) / Float(max(1, rampS - 1))  // 1 -> 0
-                gate[i] += w * (3.0 * max(fMAD[i], 1e-3))  // add extra cushion that decays
-            }
-        }
-        
-        // Apply motion and edge masks by inflating gate to impossible values
-        var gateMasked = gate
-        for i in 0..<gateMasked.count where !allow[i] { gateMasked[i] = .greatestFiniteMagnitude }
-        
-        let allowedSamples = allow.filter { $0 }.count
-        debugLog("🛡️ Bookend protection - Edge ignore: \(ignoreStartS + ignoreEndS)/\(fusedSignal.count) samples, Motion veto: allowing \(allowedSamples)/\(fusedSignal.count) samples")
-        
-        let fusedMax = fusedSignal.max() ?? 0
-        let fusedMean = fusedSignal.reduce(0, +) / Float(fusedSignal.count)
-        let fusedStd = sqrt(fusedSignal.map { pow($0 - fusedMean, 2) }.reduce(0, +) / Float(fusedSignal.count))
-        debugLog("🔗 Fusion signal - max:\(String(format: "%.6f", fusedMax)), avg:\(String(format: "%.6f", fusedMean)), std:\(String(format: "%.6f", fusedStd))")
-        
-        
-        let peakCandidates = detectPeaks(z: fusedSignal, gate: gateMasked, refractorySec: config.refractoryMs / 1000.0, fs: fs)
-        debugLog("🎯 Candidates: \(peakCandidates.count)")
-        
-        var pinchEvents: [PinchEvent] = []
-        
-        // Individual peak details omitted to reduce log volume
-        
-        // Step 4: Template Matching
-        debugLog("=== STEP 4: TEMPLATE MATCHING ===")
-        debugLog("🎯 Template-based verification of candidate peaks...")
-        debugLog("📏 Template window: \(String(format: "%.0f", config.windowPreMs))ms pre + \(String(format: "%.0f", config.windowPostMs))ms post = \(String(format: "%.0f", config.windowPreMs + config.windowPostMs))ms total")
-        debugLog("🔍 Template confidence: \(String(format: "%.2f", config.nccThresh)) (NCC threshold)")
-        
-        var templateMatchCount = 0
-        
-        // Compute template window parameters from time config
-        let preS = Int(round(config.windowPreMs * fs / 1000))
-        let postS = Int(round(config.windowPostMs * fs / 1000))
-        let windowL = preS + postS + 1
-        
-        // Filter templates to matching length
-        let templatesL = templates.filter { $0.data.count == windowL }
-        guard !templatesL.isEmpty else {
-            debugLog("⚠️ No templates of length \(windowL)")
-            return []
-        }
-        
-        for candidate in peakCandidates {
-            // 4. Pre-silence requirement - Accept candidate only if pre-window has been quiet (if enabled)
-            if config.preQuietMs > 0 {
-                let preQuietS = max(1, Int(round(config.preQuietMs * fs / 1000)))
-                let sQuiet = max(0, candidate.index - preQuietS)
-                let isQuiet = (sQuiet..<candidate.index).allSatisfy { fusedSignal[$0] < gate[$0] * 0.9 }
-                guard isQuiet else { 
-                    continue 
-                }
-            }
-            
-            let (window, sIdx, eIdx) = extractWindow(center: candidate.index, from: fusedSignal, preS: preS, postS: postS, L: windowL)
-            
-            // Try templates to find the best match (with early termination optimization)
-            var bestNccScore: Float = 0.0
-            let earlyTerminationThreshold: Float = 0.95 // Stop if we get very high confidence
-            
-            for (_, template) in templatesL.enumerated() {
-                let nccScore = ncc(window: window, template: template.data)
-                if nccScore > bestNccScore {
-                    bestNccScore = nccScore
-                    
-                    // Early termination: if we get very high confidence, no need to test remaining templates
-                    if nccScore >= earlyTerminationThreshold {
-                        break
-                    }
-                }
-            }
-            
-            if bestNccScore >= config.nccThresh {
-                let confidence = 0.6 * bestNccScore + 0.4 * min(candidate.value / 5.0, 1.0)
-                
-                let event = PinchEvent(
-                    tPeak: t[candidate.index],
-                    tStart: t[sIdx],
-                    tEnd: t[eIdx],
-                    confidence: confidence,
-                    gateScore: candidate.value,
-                    ncc: bestNccScore
-                )
-                pinchEvents.append(event)
-                templateMatchCount += 1
-                // Peak passed template matching (details omitted for concise logging)
-            } else {
-                // Peak failed template matching (details omitted for concise logging)  
-            }
-        }
-        
-        // Final analysis results
-        let processingTime = CFAbsoluteTimeGetCurrent() - startTime
-        
-        if pinchEvents.isEmpty {
-            debugLog("❌ No peaks passed template matching")
-            debugLog("   • Template may not match actual pinch signature")
-            debugLog("   • Need to collect training data from confirmed pinches")
-            debugLog("   • Consider lowering template confidence for initial testing")
-        }
-        
-        debugLog("=== ANALYSIS COMPLETE ===")
-        debugLog("✅ Processing time: \(String(format: "%.1f", processingTime * 1000))ms")
-        debugLog("📊 Final result: \(pinchEvents.count) pinch events detected")
-        
-        if pinchEvents.isEmpty {
-            debugLog("")
-            debugLog("💡 DEBUGGING SUGGESTIONS:")
-            debugLog("   1. Check if hand motion was sufficient during recording")
-            debugLog("   2. Verify watch was worn properly during session")
-            debugLog("   3. Try lower thresholds in settings")
-            debugLog("   4. Perform more pronounced pinching gestures")
-            debugLog("   5. Ensure 3-5 second recording duration minimum")
-        }
-        
-        return pinchEvents
+        return _process(frames: frames, emit: nil)
     }
     
     // Per-axis preprocessing (Python-style)
@@ -519,10 +270,11 @@ public final class PinchDetector {
         gx.reserveCapacity(frames.count); gy.reserveCapacity(frames.count); gz.reserveCapacity(frames.count)
         t.reserveCapacity(frames.count)
         
+        let startTime = frames.first?.t ?? 0.0  // Normalize to session start
         for frame in frames {
             ax.append(frame.ax); ay.append(frame.ay); az.append(frame.az)
             gx.append(frame.gx); gy.append(frame.gy); gz.append(frame.gz)
-            t.append(frame.t)
+            t.append(frame.t - startTime)  // Relative to session start
         }
         
         return (ax, ay, az, gx, gy, gz, config.fs, t)
@@ -552,13 +304,14 @@ public final class PinchDetector {
         var gyroMag = [Float]()
         var t = [TimeInterval]()
         
+        let startTime = frames.first?.t ?? 0.0  // Normalize to session start
         for frame in frames {
             let aMag = sqrt(frame.ax * frame.ax + frame.ay * frame.ay + frame.az * frame.az)
             let gMag = sqrt(frame.gx * frame.gx + frame.gy * frame.gy + frame.gz * frame.gz)
             
             accelMag.append(aMag)
             gyroMag.append(gMag)
-            t.append(frame.t)
+            t.append(frame.t - startTime)  // Relative to session start
         }
         
         return (accelMag, gyroMag, config.fs, t)
@@ -644,6 +397,17 @@ public final class PinchDetector {
         var y = [Float](repeating: 0, count: x.count)
         for i in 0..<x.count { y[i] = bp.process(x[i]) }
         sanitize(&y)
+        return y
+    }
+    
+    // --- NEW: zero-phase (forward-backward) bandpass ---
+    private func bandpassZeroPhase(_ x: [Float], fs: Float, low: Float, high: Float) -> [Float] {
+        guard !x.isEmpty, low > 0, high > low, high < 0.49*fs else { return x }
+        var fwd = bandpass(x, fs: fs, low: low, high: high)
+        fwd.reverse()
+        var bwd = bandpass(fwd, fs: fs, low: low, high: high)
+        bwd.reverse()
+        var y = bwd; sanitize(&y)
         return y
     }
     
@@ -746,95 +510,334 @@ public final class PinchDetector {
         return denominator > 0 ? numerator / denominator : 0.0
     }
     
-    // Python-style debug processing with detailed logging  
-    public func processWithDebugCallback(frames: [SensorFrame], debugCallback: @escaping (String) -> Void) -> [PinchEvent] {
-        guard !frames.isEmpty else { 
-            debugCallback("❌ Empty frames array")
-            return [] 
+    /// Linear resampling with optional time-warp factor `scale`.
+    /// Example: scale=0.9 compresses (faster gesture), 1.1 stretches (slower gesture).
+    private func resampleLinear(_ x: [Float], scale: Float, targetCount L: Int) -> [Float] {
+        guard !x.isEmpty, L > 0 else { return [Float](repeating: 0, count: max(L, 0)) }
+
+        // Virtual source length after warp
+        let virtualCount = max(2, Int(round(Float(x.count) * scale)))
+
+        // Map target index -> source position (0 ..< virtualCount-1), then back into x's index space.
+        var y = [Float](repeating: 0, count: L)
+        for i in 0..<L {
+            let u = (Float(i) / Float(max(L - 1, 1))) * Float(virtualCount - 1)
+            // Map u into original x domain (scale back)
+            let s = u / max(scale, 1e-6)
+            let sClamped = min(max(s, 0), Float(x.count - 1))
+
+            let i0 = Int(floor(sClamped))
+            let i1 = min(i0 + 1, x.count - 1)
+            let w  = sClamped - Float(i0)
+            y[i] = (1 - w) * x[i0] + w * x[i1]
         }
-        
-        debugCallback("🔬 TKEO DEBUG: 🔍 Starting TKEO analysis with \(frames.count) readings")
-        
-        // Use Python-style per-axis processing (no jerk, no magnitude-first)
-        let (ax, ay, az, gx, gy, gz, fs, _) = preprocessAxes(frames: frames)
-        
-        // Compute raw signal magnitudes for comparison with Python
-        var accelMag = [Float](), gyroMag = [Float]()
-        for i in 0..<frames.count {
-            accelMag.append(sqrt(ax[i]*ax[i] + ay[i]*ay[i] + az[i]*az[i]))
-            gyroMag.append(sqrt(gx[i]*gx[i] + gy[i]*gy[i] + gz[i]*gz[i]))
+        return y
+    }
+
+    /// Shift an array by `k` samples (positive = delay). Pads with edge samples.
+    private func shiftArray(_ x: [Float], by k: Int) -> [Float] {
+        guard !x.isEmpty, k != 0 else { return x }
+        let n = x.count
+        if k > 0 {
+            let head = [Float](repeating: x.first!, count: k)
+            return Array(head + x).prefix(n).map { $0 }
+        } else {
+            let tail = [Float](repeating: x.last!, count: -k)
+            return Array(x + tail).suffix(n).map { $0 }
         }
-        
-        let accelMean = accelMag.reduce(0, +) / Float(accelMag.count)
-        let gyroMean = gyroMag.reduce(0, +) / Float(gyroMag.count)
-        let accelMax = accelMag.max() ?? 0
-        let gyroMax = gyroMag.max() ?? 0
-        
-        debugCallback("🔬 TKEO DEBUG: 🏃 Accel: mean=\(String(format: "%.3f", accelMean)), max=\(String(format: "%.3f", accelMax)) m/s²")
-        debugCallback("🔬 TKEO DEBUG: 🌀 Gyro: mean=\(String(format: "%.3f", gyroMean)), max=\(String(format: "%.3f", gyroMax)) rad/s")
-        
-        // Band-pass per axis using stable RBJ biquads
-        var aX = bandpass(ax, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
-        var aY = bandpass(ay, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
-        var aZ = bandpass(az, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
-        
-        var gX = bandpass(gx, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
-        var gY = bandpass(gy, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
-        var gZ = bandpass(gz, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
-        
-        // Sanitize filtered signals
+    }
+    
+    // --- NEW ---
+    private func mergeNear(_ evs: [PinchEvent], minGapMs: Float) -> [PinchEvent] {
+        guard evs.count > 1 else { return evs }
+        let gap = Double(minGapMs / 1000)
+        var out: [PinchEvent] = []
+        var cur = evs.sorted { $0.tPeak < $1.tPeak }[0]
+        for e in evs.dropFirst() {
+            let timeDiff = e.tPeak - cur.tPeak
+            if timeDiff <= gap {
+                // Preserve very strong NCC pairs - don't merge if both are high quality
+                if max(cur.ncc, e.ncc) >= 0.90 {
+                    out.append(cur); cur = e  // Keep both
+                } else {
+                    // Normal merge - keep the higher confidence one
+                    if e.confidence > cur.confidence { cur = e }
+                }
+            } else {
+                out.append(cur); cur = e
+            }
+        }
+        out.append(cur); return out
+    }
+    
+    // MARK: - Shared core
+    private func _process(frames: [SensorFrame],
+                          emit: ((String) -> Void)?) -> [PinchEvent] {
+        func log(_ s: String) { emit?(s) }
+
+        guard !frames.isEmpty else {
+            log("❌ Empty frames array")
+            return []
+        }
+
+        let t0 = CFAbsoluteTimeGetCurrent()
+
+        // -------- Prep / stats (unchanged) --------
+        let (ax, ay, az, gx, gy, gz, fs, t) = preprocessAxes(frames: frames)
+        log("📊 Raw signal stats - samples: \(ax.count), duration: \(String(format: "%.1f", Float(ax.count)/fs))s")
+
+        // Filters - Use zero-phase bandpass (NEW: eliminates phase lag)
+        log("🔄 Applying zero-phase bandpass filter: \(String(format: "%.1f", config.bandpassLow))-\(String(format: "%.1f", config.bandpassHigh))Hz")
+        var aX = bandpassZeroPhase(ax, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
+        var aY = bandpassZeroPhase(ay, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
+        var aZ = bandpassZeroPhase(az, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
+        var gX = bandpassZeroPhase(gx, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
+        var gY = bandpassZeroPhase(gy, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
+        var gZ = bandpassZeroPhase(gz, fs: fs, low: config.bandpassLow, high: config.bandpassHigh)
         sanitize(&aX); sanitize(&aY); sanitize(&aZ)
         sanitize(&gX); sanitize(&gY); sanitize(&gZ)
-        
-        // TKEO per axis with positive clamp (Python-style)
-        let aXT = tkeo(aX), aYT = tkeo(aY), aZT = tkeo(aZ)
-        let gXT = tkeo(gX), gYT = tkeo(gY), gZT = tkeo(gZ)
-        
-        // Fuse across axes: L2 norm of positive TKEO values (Python-style)
+        log("✅ Zero-phase filtering complete - no causal delay introduced")
+
+        // TKEO computation
+        var aXT = tkeo(aX), aYT = tkeo(aY), aZT = tkeo(aZ)
+        var gXT = tkeo(gX), gYT = tkeo(gY), gZT = tkeo(gZ)
+        sanitize(&aXT); sanitize(&aYT); sanitize(&aZT)
+        sanitize(&gXT); sanitize(&gYT); sanitize(&gZT)
+        log("⚡ TKEO computed: accel ranges X[\(String(format: "%.2f", aXT.min() ?? 0))-\(String(format: "%.2f", aXT.max() ?? 0))], Y[\(String(format: "%.2f", aYT.min() ?? 0))-\(String(format: "%.2f", aYT.max() ?? 0))], Z[\(String(format: "%.2f", aZT.min() ?? 0))-\(String(format: "%.2f", aZT.max() ?? 0))]")
+
+        // L2 fusion of TKEO energies
         var accelTkeo = fuseL2Positive([aXT, aYT, aZT])
-        var gyroTkeo = fuseL2Positive([gXT, gYT, gZT])
+        var gyroTkeo  = fuseL2Positive([gXT, gYT, gZT])
+        sanitize(&accelTkeo); sanitize(&gyroTkeo)
+        log("🔗 TKEO fusion: accel_L2 range [\(String(format: "%.2f", accelTkeo.min() ?? 0))-\(String(format: "%.2f", accelTkeo.max() ?? 0))], gyro_L2 range [\(String(format: "%.2f", gyroTkeo.min() ?? 0))-\(String(format: "%.2f", gyroTkeo.max() ?? 0))]")
+
+        // Robust z-normalization using sliding MAD
+        let (aMed, aMAD) = slidingMedianMAD(accelTkeo, winSec: config.madWinSec, fs: fs)
+        let (gMed, gMAD) = slidingMedianMAD(gyroTkeo,  winSec: config.madWinSec, fs: fs)
+        var accelZ = zip(accelTkeo, zip(aMed, aMAD)).map { (v, mm) in let (m, md) = mm; return md > 0 ? (v - m)/md : 0 }
+        var gyroZ = zip(gyroTkeo,  zip(gMed, gMAD)).map { (v, mm) in let (m, md) = mm; return md > 0 ? (v - m)/md : 0 }
+        sanitize(&accelZ); sanitize(&gyroZ)
+        log("📊 Z-score ranges: accel [\(String(format: "%.2f", accelZ.min() ?? 0))-\(String(format: "%.2f", accelZ.max() ?? 0))], gyro [\(String(format: "%.2f", gyroZ.min() ?? 0))-\(String(format: "%.2f", gyroZ.max() ?? 0))]")
+
+        // Weighted fusion + light EMA smoothing
+        var fused = zip(accelZ, gyroZ).map { config.accelWeight*$0 + config.gyroWeight*$1 }
+        if fused.count > 1 {
+            let alpha: Float = 0.2
+            for i in 1..<fused.count { fused[i] = alpha*fused[i-1] + (1 - alpha)*fused[i] }
+        }
+        sanitize(&fused)
+        log("⚖️ Fused signal: range [\(String(format: "%.2f", fused.min() ?? 0))-\(String(format: "%.2f", fused.max() ?? 0))], weights: accel=\(config.accelWeight), gyro=\(config.gyroWeight)")
+
+        // Adaptive gating threshold = median + K·(MAD→σ)
+        let (fMed, fMAD) = slidingMedianMAD(fused, winSec: config.madWinSec, fs: fs)
+        let madToSigma: Float = 1.4826
+        var gate = zip(fMed, fMAD).map { (m, md) in m + config.gateK * madToSigma * max(md, 1e-3) }
+        log("🚪 Gate threshold: K=\(config.gateK)σ, range [\(String(format: "%.2f", gate.min() ?? 0))-\(String(format: "%.2f", gate.max() ?? 0))], baseline median [\(String(format: "%.2f", fMed.min() ?? 0))-\(String(format: "%.2f", fMed.max() ?? 0))]")
+
+        // --- Bookend / motion veto (unchanged logic) ---
+        let ignoreStartS = Int(round(config.ignoreStartMs * fs / 1000))
+        let ignoreEndS   = Int(round(config.ignoreEndMs   * fs / 1000))
+        var allow = [Bool](repeating: true, count: fused.count)
+        for i in 0..<min(ignoreStartS, allow.count) { allow[i] = false }
+        for i in max(0, allow.count - ignoreEndS)..<allow.count { allow[i] = false }
+
+        var gyroMag = [Float](repeating: 0, count: gX.count)
+        for i in 0..<gX.count { gyroMag[i] = sqrt(gX[i]*gX[i] + gY[i]*gY[i] + gZ[i]*gZ[i]) }
+        let holdS = max(1, Int(round(config.gyroVetoHoldMs * fs / 1000)))
+        var below = [Bool](repeating: false, count: gyroMag.count)
+        for i in 0..<gyroMag.count { below[i] = gyroMag[i] <= config.gyroVetoThresh }
+        var motionOK = [Bool](repeating: false, count: gyroMag.count)
+        var run = 0
+        for i in 0..<below.count { run = below[i] ? (run + 1) : 0; motionOK[i] = run >= holdS }
+        for i in 0..<allow.count { allow[i] = allow[i] && motionOK[i] }
+
+        if config.gateRampMs > 0 {
+            let rampS = Int(round(config.gateRampMs * fs / 1000))
+            for i in 0..<min(rampS, gate.count) {
+                let w = 1 - Float(i) / Float(max(1, rampS - 1))
+                gate[i] += w * (3 * max(fMAD[i], 1e-3))
+            }
+        }
+
+        var gateMasked = gate
+        for i in 0..<gateMasked.count where !allow[i] { gateMasked[i] = Float.greatestFiniteMagnitude }
+
+        // Peak detection
+        let peaks = detectPeaks(z: fused, gate: gateMasked, refractorySec: config.refractoryMs/1000, fs: fs)
+        log("🏔️ Peak detection: \(peaks.count) candidates found, refractory=\(String(format: "%.0f", config.refractoryMs))ms")
+
+        // -------- Template expansion & matching (NEW SHARED PART) --------
+        log("🔍 === TEMPLATE EXPANSION & MATCHING ===")
+
+        // Window sizing
+        let preS  = Int(round(config.windowPreMs  * fs / 1000))
+        let postS = Int(round(config.windowPostMs * fs / 1000))
+        let L     = preS + postS + 1
+        guard L > 0 else { 
+            log("❌ Invalid window length: L=\(L)")
+            return [] 
+        }
+        log("📐 Window config: preS=\(preS), postS=\(postS), L=\(L) samples")
+
+        // Use only templates that already match L; if your JSON is a different length,
+        // time-warp will resample them into L anyway.
+        let rawTemplates: [[Float]] = templates.map { $0.data }
+        log("📋 Raw templates: \(rawTemplates.count) templates, lengths: \(rawTemplates.map { $0.count })")
+
+        // Expand templates with small time warps (±10%) and resample back to L.
+        // Tweak the grid if you want more/less coverage vs speed.
+        let warpGrid: [Float] = [0.95, 1.00, 1.05]  // Tightened for better precision
+        var expanded: [[Float]] = []
+        expanded.reserveCapacity(rawTemplates.count * warpGrid.count)
+
+        log("🔄 Expanding templates with time warps: \(warpGrid)")
+        for (tplIdx, tpl) in rawTemplates.enumerated() {
+            log("📝 Template[\(tplIdx)] original length: \(tpl.count) → resampling to L=\(L)")
+            for (scaleIdx, s) in warpGrid.enumerated() {
+                let warped = resampleLinear(tpl, scale: s, targetCount: L)
+                expanded.append(warped)
+                log("  ↳ Scale \(String(format: "%.2f", s)): length \(warped.count), range [\(String(format: "%.4f", warped.min() ?? 0)), \(String(format: "%.4f", warped.max() ?? 0))]")
+                
+                // Test shiftArray function on first template's first scale for verification
+                if tplIdx == 0 && scaleIdx == 0 {
+                    let testShifts = [-2, -1, 0, 1, 2]
+                    var shiftSamples: [String] = []
+                    for shift in testShifts {
+                        let shifted = shiftArray(warped, by: shift)
+                        let sample = shifted.count > 5 ? String(format: "%.3f", shifted[5]) : "N/A"
+                        shiftSamples.append("sh\(shift)[\(5)]=\(sample)")
+                    }
+                    log("  🧪 ShiftArray test: \(shiftSamples.joined(separator: ", "))")
+                }
+            }
+        }
+        log("📈 Total expanded templates: \(expanded.count) (= \(rawTemplates.count) × \(warpGrid.count))")
+
+        // Max ±1-sample shift search for tighter precision (reduced from ±2)
+        let maxShift = 1
+        log("↔️ Shift tolerance: ±\(maxShift) samples (±\(String(format: "%.0f", Float(maxShift) * 1000 / fs))ms at \(fs)Hz)")
+
+        var events: [PinchEvent] = []
+        let nccThresh: Float = max(config.nccThresh, 0.65)  // Raised for better precision
+        log("🎯 NCC threshold: \(String(format: "%.3f", nccThresh))")
+        log("🔍 Processing \(peaks.count) peak candidates...")
+        log("💡 Precision-focused algorithm improvements:")
+        log("   • Zero-phase filtering (eliminates \(String(format: "%.1f", 1000.0/(2*fs)))ms phase lag)")
+        log("   • Multi-scale templates (\(warpGrid.count) tightened warps per template)")
+        log("   • ±\(maxShift) sample shift tolerance (tightened from ±2)")
+        log("   • Amplitude surplus guard (≥\(String(format: "%.1f", config.amplitudeSurplusThresh))σ over local MAD)")
+        log("   • ISI guard (<\(String(format: "%.0f", config.isiThresholdMs))ms unless NCC≥0.90)")
+        let mergeGapMs = max(config.isiThresholdMs, 180)  // consistent with ISI, min 180ms
+        log("   • Near-duplicate merging (gap≥\(String(format: "%.0f", mergeGapMs))ms, preserve strong NCC≥0.90)")
+
+        var candidateDetails: [String] = []
+        for (pkIdx, pk) in peaks.enumerated() {
+            // Optional pre-quiet requirement
+            if config.preQuietMs > 0 {
+                let need = max(1, Int(round(config.preQuietMs * fs / 1000)))
+                let sQuiet = max(0, pk.index - need)
+                let quiet = (sQuiet..<pk.index).allSatisfy { fused[$0] < gate[$0] * 0.9 }
+                if !quiet { 
+                    candidateDetails.append("Peak[\(pkIdx)] @ \(String(format: "%.3f", t[pk.index]))s: REJECTED pre-quiet")
+                    continue 
+                }
+            }
+
+            // Extract window
+            let (win, sIdx, eIdx) = extractWindow(center: pk.index, from: fused, preS: preS, postS: postS, L: L)
+
+            // Best NCC across (expanded templates × small shifts)
+            var bestNCC: Float = 0
+            var bestTemplateIdx: Int = -1
+            var bestShift: Int = 0
+            var totalComparisons = 0
+            var earlyStop = false
+            
+            for (tplIdx, tpl) in expanded.enumerated() {
+                // try shifts by shifting the template (pad with edges)
+                for sh in -maxShift...maxShift {
+                    let tplShifted = shiftArray(tpl, by: sh)
+                    let score = ncc(window: win, template: tplShifted)
+                    totalComparisons += 1
+                    
+                    if score > bestNCC { 
+                        bestNCC = score
+                        bestTemplateIdx = tplIdx
+                        bestShift = sh
+                    }
+                    if bestNCC >= 0.95 { earlyStop = true; break } // early exit
+                }
+                if earlyStop { break }
+            }
+
+            let originalTplIdx = bestTemplateIdx >= 0 ? bestTemplateIdx / warpGrid.count : -1
+            let scaleIdx = bestTemplateIdx >= 0 ? bestTemplateIdx % warpGrid.count : -1
+            let scale = scaleIdx >= 0 ? warpGrid[scaleIdx] : 1.0
+            
+            if bestNCC >= nccThresh {
+                // Amplitude surplus guard: require configurable σ over local MAD baseline
+                let surplus = max(0, pk.value - gate[pk.index])
+                let localMAD = max(1e-6, fMAD[pk.index])
+                
+                guard surplus >= config.amplitudeSurplusThresh * localMAD else {
+                    candidateDetails.append("Peak[\(pkIdx)] @ \(String(format: "%.3f", t[pk.index]))s: ❌ REJECTED - insufficient amplitude surplus (\(String(format: "%.2f", surplus/localMAD))σ < \(String(format: "%.1f", config.amplitudeSurplusThresh))σ)")
+                    continue
+                }
+                
+                // Inter-spike interval guard: reject if too close to previous event (unless very high NCC)
+                if let lastEvent = events.last {
+                    let timeSinceLast = t[pk.index] - lastEvent.tPeak
+                    if timeSinceLast < Double(config.isiThresholdMs / 1000.0) && bestNCC < 0.90 {
+                        candidateDetails.append("Peak[\(pkIdx)] @ \(String(format: "%.3f", t[pk.index]))s: ❌ REJECTED - ISI too short (\(String(format: "%.0f", timeSinceLast*1000))ms < \(String(format: "%.0f", config.isiThresholdMs))ms, NCC=\(String(format: "%.3f", bestNCC)) < 0.90)")
+                        continue
+                    }
+                }
+
+                // Confidence: blend NCC + amplitude surplus 
+                let ampScore = min(surplus / (3.0 * localMAD), 1.0)
+                let conf = 0.6 * bestNCC + 0.4 * ampScore
+
+                events.append(PinchEvent(tPeak: t[pk.index],
+                                         tStart: t[sIdx],
+                                         tEnd:   t[eIdx],
+                                         confidence: conf,
+                                         gateScore: pk.value,
+                                         ncc: bestNCC))
+                
+                candidateDetails.append("Peak[\(pkIdx)] @ \(String(format: "%.3f", t[pk.index]))s: ✅ ACCEPTED - NCC=\(String(format: "%.3f", bestNCC)), tpl[\(originalTplIdx)], scale=\(String(format: "%.2f", scale)), shift=\(bestShift), surplus=\(String(format: "%.2f", surplus/localMAD))σ, comps=\(totalComparisons)\(earlyStop ? " (early)" : "")")
+            } else {
+                candidateDetails.append("Peak[\(pkIdx)] @ \(String(format: "%.3f", t[pk.index]))s: ❌ REJECTED - NCC=\(String(format: "%.3f", bestNCC)) < \(String(format: "%.3f", nccThresh)), best: tpl[\(originalTplIdx)], scale=\(String(format: "%.2f", scale)), shift=\(bestShift)")
+            }
+        }
+
+        // Log candidate details
+        for detail in candidateDetails {
+            log(detail)
+        }
+
+        log("📊 Pre-merge results: \(events.count) events passed template matching")
+
+        // Apply mergeNear to prevent duplicate events (consistent with ISI threshold)
+        let mergedEvents = mergeNear(events, minGapMs: mergeGapMs)
         
-        // Sanitize TKEO outputs
-        sanitize(&accelTkeo)
-        sanitize(&gyroTkeo)
-        
-        let validAccelTkeo = accelTkeo.filter { $0.isFinite }
-        let accelTkeoMean = validAccelTkeo.isEmpty ? 0.0 : validAccelTkeo.reduce(0, +) / Float(validAccelTkeo.count)
-        let accelTkeoMax = validAccelTkeo.max() ?? 0
-        debugCallback("🔬 TKEO DEBUG: ⚡ Accel TKEO: mean=\(String(format: "%.3f", accelTkeoMean)), max=\(String(format: "%.3f", accelTkeoMax)) (valid: \(validAccelTkeo.count)/\(accelTkeo.count))")
-        
-        let validGyroTkeo = gyroTkeo.filter { $0.isFinite }
-        let gyroTkeoMean = validGyroTkeo.isEmpty ? 0.0 : validGyroTkeo.reduce(0, +) / Float(validGyroTkeo.count)
-        let gyroTkeoMax = validGyroTkeo.max() ?? 0
-        debugCallback("🔬 TKEO DEBUG: 🌪️ Gyro TKEO: mean=\(String(format: "%.3f", gyroTkeoMean)), max=\(String(format: "%.3f", gyroTkeoMax)) (valid: \(validGyroTkeo.count)/\(gyroTkeo.count))")
-        
-        // Global median statistics with high precision
-        let accelMedianGlobal = validAccelTkeo.isEmpty ? 0.0 : validAccelTkeo.sorted()[validAccelTkeo.count / 2]
-        let gyroMedianGlobal = validGyroTkeo.isEmpty ? 0.0 : validGyroTkeo.sorted()[validGyroTkeo.count / 2]
-        
-        // Count zeros and near-zeros (GPT-5 recommendation)
-        let eps: Float = 1e-6
-        let accelZeros = validAccelTkeo.filter { $0 == 0 }.count
-        let gyroZeros = validGyroTkeo.filter { $0 == 0 }.count
-        let accelNearZeros = validAccelTkeo.filter { value in abs(value) <= eps }.count
-        let gyroNearZeros = validGyroTkeo.filter { value in abs(value) <= eps }.count
-        
-        let nonZeroAccel = validAccelTkeo.filter { $0 != 0 }
-        let meanNonZeroAccel = nonZeroAccel.isEmpty ? 0.0 : nonZeroAccel.reduce(0, +) / Float(nonZeroAccel.count)
-        let nonZeroGyro = validGyroTkeo.filter { $0 != 0 }
-        let meanNonZeroGyro = nonZeroGyro.isEmpty ? 0.0 : nonZeroGyro.reduce(0, +) / Float(nonZeroGyro.count)
-        
-        debugCallback("🔬 TKEO DEBUG: 📊 Global Reference - Accel median: \(String(format: "%.6f", accelMedianGlobal)) (valid: \(validAccelTkeo.count)/\(accelTkeo.count))")
-        debugCallback("🔬 TKEO DEBUG: 📊 Global Reference - Gyro median: \(String(format: "%.6f", gyroMedianGlobal)) (valid: \(validGyroTkeo.count)/\(gyroTkeo.count))")
-        debugCallback("🔬 TKEO DEBUG: 🔍 Accel TKEO zeros: \(accelZeros), near-zeros: \(accelNearZeros), non-zero mean: \(String(format: "%.3f", meanNonZeroAccel))")
-        debugCallback("🔬 TKEO DEBUG: 🔍 Gyro TKEO zeros: \(gyroZeros), near-zeros: \(gyroNearZeros), non-zero mean: \(String(format: "%.3f", meanNonZeroGyro))")
-        
-        // Skip the complex normalization and just do basic thresholding for now
-        // This will help us verify the TKEO values are correct before worrying about detection
-        debugCallback("🔬 TKEO DEBUG: ✅ Python-style TKEO processing complete")
-        
-        // Return empty for now since we're just debugging TKEO values
-        return []
+        if events.count != mergedEvents.count {
+            log("🔄 Merge near-duplicates: \(events.count) → \(mergedEvents.count) (gap=\(String(format: "%.0f", mergeGapMs))ms)")
+            log("📋 Original events: \(events.map { String(format: "%.3f", $0.tPeak) }.joined(separator: ", "))s")
+            log("📋 Merged events: \(mergedEvents.map { String(format: "%.3f", $0.tPeak) }.joined(separator: ", "))s")
+        } else {
+            log("✨ No duplicates to merge (gap=\(String(format: "%.0f", mergeGapMs))ms)")
+        }
+
+        let dt = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+        log("✅ _process complete in \(String(format: "%.1f", dt))ms, detected \(mergedEvents.count)")
+
+        return mergedEvents
+    }
+    
+    @discardableResult
+    public func processWithDebugCallback(frames: [SensorFrame],
+                                         debugCallback: @escaping (String) -> Void) -> [PinchEvent] {
+        return _process(frames: frames, emit: debugCallback)
     }
 }
 
