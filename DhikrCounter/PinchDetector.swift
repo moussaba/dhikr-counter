@@ -446,25 +446,68 @@ public final class PinchDetector {
         return y
     }
     
-    private func slidingMedianMAD(_ x: [Float], winSec: Float, fs: Float) -> ([Float], [Float]) {
-        let W = max(3, Int(round(winSec * fs)) | 1) // Odd window
-        var med = [Float](repeating: 0, count: x.count)
-        var mad = [Float](repeating: 0, count: x.count)
+    /// O(1) streaming robust baseline and scale estimator
+    /// Replaces O(n log n) sliding median/MAD with Huber-EMA + windsorized scale
+    private class StreamingBaselineMAD {
+        private var baseline: Float = 0.0
+        private var scale: Float = 0.01
+        private let alpha: Float
+        private let beta: Float
+        private let huberC: Float = 2.5
+        private let winsorC: Float = 3.5
+        private let scaleMin: Float = 1e-6
+        private let madToSigma: Float = 1.4826
+        private var initialized: Bool = false
         
-        for i in 0..<x.count {
-            let a = max(0, i - W/2)
-            let b = min(x.count, i + W/2 + 1)
-            var w = Array(x[a..<b])
-            w.sort()
-            let m = w[w.count/2]
-            var d = w.map { abs($0 - m) }
-            d.sort()
-            let md = d[d.count/2]
-            med[i] = m
-            mad[i] = md
+        init(winSec: Float, fs: Float) {
+            // Match effective window: α ≈ 2/(N_eff + 1) where N_eff ≈ winSec * fs
+            let nEff = winSec * fs
+            self.alpha = 2.0 / (nEff + 1.0)
+            self.beta = 2.0 / (nEff + 1.0)
         }
         
-        return (med, mad)
+        func update(_ x: Float) -> (baseline: Float, mad: Float) {
+            if !initialized {
+                baseline = x
+                scale = max(abs(x) * 0.1, scaleMin)
+                initialized = true
+                return (baseline, scale * madToSigma)
+            }
+            
+            // Robust baseline update with Huber influence function
+            let residual = x - baseline
+            let scaleSafe = max(scale, scaleMin)
+            let u = residual / scaleSafe
+            let uClamped = min(max(u, -huberC), huberC)  // Huber clipping
+            baseline += alpha * scaleSafe * uClamped
+            
+            // Windsorized scale update (EW "MAD-like")
+            let absResidual = abs(residual)
+            let absWindsorized = min(absResidual, winsorC * scaleSafe)
+            scale = (1.0 - beta) * scale + beta * absWindsorized
+            
+            return (baseline, scale * madToSigma)
+        }
+    }
+    
+    /// O(1) streaming baseline and MAD estimation - replaces O(n log n) sliding window
+    private func streamingBaselineMAD(_ x: [Float], winSec: Float, fs: Float) -> ([Float], [Float]) {
+        guard !x.isEmpty else { return ([], []) }
+        
+        let estimator = StreamingBaselineMAD(winSec: winSec, fs: fs)
+        var baselines = [Float]()
+        var mads = [Float]()
+        
+        baselines.reserveCapacity(x.count)
+        mads.reserveCapacity(x.count)
+        
+        for sample in x {
+            let (baseline, mad) = estimator.update(sample)
+            baselines.append(baseline)
+            mads.append(mad)
+        }
+        
+        return (baselines, mads)
     }
     
     private func detectPeaks(z: [Float], gate: [Float], refractorySec: Float, fs: Float) -> [PeakCandidate] {
@@ -611,9 +654,12 @@ public final class PinchDetector {
         sanitize(&accelTkeo); sanitize(&gyroTkeo)
         log("🔗 TKEO fusion: accel_L2 range [\(String(format: "%.2f", accelTkeo.min() ?? 0))-\(String(format: "%.2f", accelTkeo.max() ?? 0))], gyro_L2 range [\(String(format: "%.2f", gyroTkeo.min() ?? 0))-\(String(format: "%.2f", gyroTkeo.max() ?? 0))]")
 
-        // Robust z-normalization using sliding MAD
-        let (aMed, aMAD) = slidingMedianMAD(accelTkeo, winSec: config.madWinSec, fs: fs)
-        let (gMed, gMAD) = slidingMedianMAD(gyroTkeo,  winSec: config.madWinSec, fs: fs)
+        // Robust z-normalization using streaming O(1) baseline/MAD (replaces O(n log n) sliding window)
+        let baselineStartTime = CFAbsoluteTimeGetCurrent()
+        let (aMed, aMAD) = streamingBaselineMAD(accelTkeo, winSec: config.madWinSec, fs: fs)
+        let (gMed, gMAD) = streamingBaselineMAD(gyroTkeo,  winSec: config.madWinSec, fs: fs)
+        let baselineTime = (CFAbsoluteTimeGetCurrent() - baselineStartTime) * 1000
+        log("📈 O(1) Streaming baseline: \(String(format: "%.2f", baselineTime))ms for \(accelTkeo.count + gyroTkeo.count) samples (was O(n²) with \(accelTkeo.count * 2 * Int(round(config.madWinSec * fs)))) sort operations)")
         var accelZ = zip(accelTkeo, zip(aMed, aMAD)).map { (v, mm) in let (m, md) = mm; return md > 0 ? (v - m)/md : 0 }
         var gyroZ = zip(gyroTkeo,  zip(gMed, gMAD)).map { (v, mm) in let (m, md) = mm; return md > 0 ? (v - m)/md : 0 }
         sanitize(&accelZ); sanitize(&gyroZ)
@@ -628,8 +674,8 @@ public final class PinchDetector {
         sanitize(&fused)
         log("⚖️ Fused signal: range [\(String(format: "%.2f", fused.min() ?? 0))-\(String(format: "%.2f", fused.max() ?? 0))], weights: accel=\(config.accelWeight), gyro=\(config.gyroWeight)")
 
-        // Adaptive gating threshold = median + K·(MAD→σ)
-        let (fMed, fMAD) = slidingMedianMAD(fused, winSec: config.madWinSec, fs: fs)
+        // Adaptive gating threshold = baseline + K·(streaming MAD→σ)  
+        let (fMed, fMAD) = streamingBaselineMAD(fused, winSec: config.madWinSec, fs: fs)
         let madToSigma: Float = 1.4826
         var gate = zip(fMed, fMAD).map { (m, md) in m + config.gateK * madToSigma * max(md, 1e-3) }
         log("🚪 Gate threshold: K=\(config.gateK)σ, range [\(String(format: "%.2f", gate.min() ?? 0))-\(String(format: "%.2f", gate.max() ?? 0))], baseline median [\(String(format: "%.2f", fMed.min() ?? 0))-\(String(format: "%.2f", fMed.max() ?? 0))]")
