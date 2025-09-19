@@ -22,6 +22,7 @@ public final class StreamingPinchDetector {
     private var tkeoGZ: TKEOOperator
 
     private var baselineEstimator: StreamingBaselineMad
+    private var peakDetector: StreamingPeakDetector
 
     // State tracking
     private var isInitialized: Bool = false
@@ -48,6 +49,13 @@ public final class StreamingPinchDetector {
 
         // Initialize baseline estimator - reuse existing StreamingBaselineMAD from PinchDetector
         self.baselineEstimator = StreamingBaselineMad(winSec: config.madWinSec, fs: config.fs)
+
+        // Initialize peak detector for Phase 2
+        self.peakDetector = StreamingPeakDetector(
+            refractoryMs: config.refractoryMs,
+            gateK: config.gateK,
+            fs: config.fs
+        )
     }
 
     /// Process single sensor frame and return potential pinch event
@@ -79,8 +87,21 @@ public final class StreamingPinchDetector {
         // 4. Update baseline and sigma estimation
         let (baseline, sigma) = baselineEstimator.update(fusedSignal)
 
-        // Phase 1 scope: Only validate fused signal output
-        // Return nil for now - peak detection and template matching in later phases
+        // Phase 2: Peak detection with streaming state machine
+        let gateThreshold = baseline + config.gateK * max(sigma, 1e-3)
+        if let peakCandidate = peakDetector.process(signal: fusedSignal, gate: gateThreshold, timestamp: frame.t) {
+            // TODO Phase 3: Template matching will go here
+            // For now, return a basic PinchEvent for testing
+            return PinchEvent(
+                tPeak: peakCandidate.timestamp,
+                tStart: peakCandidate.timestamp - 0.1,  // Placeholder start time
+                tEnd: peakCandidate.timestamp + 0.1,    // Placeholder end time
+                confidence: 0.8,                        // Placeholder confidence
+                gateScore: peakCandidate.value,         // Use peak value as gate score
+                ncc: 0.8                               // Placeholder NCC score
+            )
+        }
+
         return nil
     }
 
@@ -101,6 +122,7 @@ public final class StreamingPinchDetector {
         tkeoGZ.reset()
 
         baselineEstimator = StreamingBaselineMad(winSec: config.madWinSec, fs: config.fs)
+        peakDetector.reset()
         isInitialized = false
     }
 
@@ -295,5 +317,116 @@ private final class StreamingBaselineMad {
         scale = (1.0 - beta) * scale + beta * absWindsorized
 
         return (baseline, scale * absDevToSigma)
+    }
+}
+
+// MARK: - StreamingPeakDetector
+
+/// Phase 2: Peak detection state machine for real-time operation
+/// Converts batch peak detection algorithm to streaming with proper state transitions
+private final class StreamingPeakDetector {
+
+    // Peak detection states
+    private enum PeakState {
+        case belowGate      // Signal is below gate threshold
+        case rising         // Signal crossed above gate, currently rising
+        case falling        // Signal reached peak and is now falling
+    }
+
+    // Peak candidate for when peak is confirmed
+    struct PeakCandidate {
+        let timestamp: Double
+        let value: Float
+    }
+
+    // Configuration
+    private let refractoryMs: Float
+    private let gateK: Float
+    private let fs: Float
+
+    // State variables
+    private var state: PeakState = .belowGate
+    private var previousSignal: Float = 0
+    private var previousGate: Float = 0
+    private var peakValue: Float = 0
+    private var peakTimestamp: Double = 0
+    private var lastPeakTime: Double = 0
+    private var risingStartTime: Double = 0
+
+    init(refractoryMs: Float, gateK: Float, fs: Float) {
+        self.refractoryMs = refractoryMs
+        self.gateK = gateK
+        self.fs = fs
+    }
+
+    /// Process single sample and return peak candidate if detected
+    func process(signal: Float, gate: Float, timestamp: Double) -> PeakCandidate? {
+        defer {
+            previousSignal = signal
+            previousGate = gate
+        }
+
+        let refractoryTimeSec = Double(refractoryMs) / 1000.0
+
+        switch state {
+        case .belowGate:
+            // Check for signal crossing above gate threshold
+            // Batch algorithm: z[i-1] <= gate[i-1] && z[i] > gate[i]
+            if previousSignal <= previousGate && signal > gate {
+                // Signal crossed above gate - start rising phase
+                state = .rising
+                peakValue = signal
+                peakTimestamp = timestamp
+                risingStartTime = timestamp
+            }
+
+        case .rising:
+            // Signal is above gate, track peak while rising
+            if signal >= previousSignal {
+                // Still rising - update peak
+                peakValue = signal
+                peakTimestamp = timestamp
+            } else {
+                // Signal started falling - transition to falling state
+                state = .falling
+            }
+
+        case .falling:
+            // Signal has peaked and is falling
+            // Check if we should confirm this as a valid peak
+
+            // Must still be above gate at peak location (batch: z[j] > gate[j])
+            // and respect refractory period
+            if peakValue > gate && (timestamp - lastPeakTime) >= refractoryTimeSec {
+                // Valid peak detected!
+                lastPeakTime = timestamp
+                state = .belowGate  // Reset state for next peak
+
+                return PeakCandidate(timestamp: peakTimestamp, value: peakValue)
+            } else {
+                // Invalid peak (below gate or in refractory period)
+                state = .belowGate
+            }
+
+            // If signal goes back above gate while falling, restart rising phase
+            if signal > gate && signal > previousSignal {
+                state = .rising
+                peakValue = signal
+                peakTimestamp = timestamp
+                risingStartTime = timestamp
+            }
+        }
+
+        return nil
+    }
+
+    func reset() {
+        state = .belowGate
+        previousSignal = 0
+        previousGate = 0
+        peakValue = 0
+        peakTimestamp = 0
+        lastPeakTime = 0
+        risingStartTime = 0
     }
 }
