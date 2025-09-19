@@ -56,7 +56,10 @@ struct DashboardView: View {
                     
                     // Watch connection status
                     WatchConnectionView()
-                    
+
+                    // Phase 1 Streaming Test
+                    Phase1ValidationView()
+
                     // Recent sessions
                     RecentSessionsView()
                 }
@@ -1303,6 +1306,217 @@ extension DhikrSession {
         let minutes = Int(sessionDuration / 60)
         let seconds = Int(sessionDuration.truncatingRemainder(dividingBy: 60))
         return "\(minutes):\(String(format: "%02d", seconds))"
+    }
+}
+
+
+
+// MARK: - Phase 1 Validation View
+
+struct Phase1ValidationView: View {
+    @State private var testStatus: TestStatus = .idle
+    @State private var testResults = ""
+    @ObservedObject private var dataManager = PhoneSessionManager.shared
+
+    enum TestStatus {
+        case idle, running, passed, failed
+
+        var statusText: String {
+            switch self {
+            case .idle: return "Ready"
+            case .running: return "Testing..."
+            case .passed: return "Validation Passed"
+            case .failed: return "Validation Failed"
+            }
+        }
+
+        var statusColor: Color {
+            switch self {
+            case .idle: return .blue
+            case .running: return .orange
+            case .passed: return .green
+            case .failed: return .red
+            }
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Phase 1: Streaming Validation")
+                    .font(.headline)
+                    .fontWeight(.semibold)
+
+                Spacer()
+
+                HStack {
+                    Image(systemName: testStatus == .running ? "hourglass" :
+                          testStatus == .passed ? "checkmark.circle.fill" :
+                          testStatus == .failed ? "xmark.circle.fill" : "circle")
+                        .foregroundColor(testStatus.statusColor)
+
+                    Text(testStatus.statusText)
+                        .font(.caption)
+                        .foregroundColor(testStatus.statusColor)
+                }
+            }
+
+            Text("Compare batch vs streaming processing on real sensor data")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+
+            Button(action: runValidationTest) {
+                HStack {
+                    Image(systemName: testStatus == .running ? "hourglass" : "play.circle")
+                    Text(testStatus == .running ? "Testing..." : "Run Validation")
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(testStatus == .running ? Color.orange : Color.blue)
+                .cornerRadius(8)
+            }
+            .disabled(testStatus == .running || dataManager.receivedSessions.isEmpty)
+
+            if dataManager.receivedSessions.isEmpty {
+                Text("⚠️ No sensor data available. Transfer data from Watch to test.")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+            }
+
+            if !testResults.isEmpty {
+                VStack(spacing: 8) {
+                    HStack {
+                        Text("Test Results")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+
+                        Spacer()
+
+                        Button(action: {
+                            UIPasteboard.general.string = testResults
+                        }) {
+                            HStack {
+                                Image(systemName: "doc.on.doc")
+                                Text("Copy")
+                            }
+                            .font(.caption)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.blue.opacity(0.1))
+                            .foregroundColor(.blue)
+                            .cornerRadius(4)
+                        }
+                    }
+
+                    ScrollView {
+                        Text(testResults)
+                            .font(.system(.caption, design: .monospaced))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                            .background(Color(.systemGray6))
+                            .cornerRadius(6)
+                    }
+                    .frame(maxHeight: 150)
+                }
+            }
+        }
+        .padding()
+        .background(Color(.systemGray6))
+        .cornerRadius(16)
+    }
+
+    private func runValidationTest() {
+        guard let latestSession = dataManager.receivedSessions.sorted(by: { $0.startTime > $1.startTime }).first,
+              let sensorData = dataManager.getSensorData(for: latestSession.id.uuidString),
+              !sensorData.isEmpty else {
+            testStatus = .failed
+            testResults = "❌ No sensor data available for testing"
+            return
+        }
+
+        testStatus = .running
+        testResults = ""
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = validateStreamingImplementation(sensorData: sensorData)
+
+            DispatchQueue.main.async {
+                testStatus = result.passed ? .passed : .failed
+                testResults = result.message
+            }
+        }
+    }
+
+    private func validateStreamingImplementation(sensorData: [SensorReading]) -> (passed: Bool, message: String) {
+        let startTime = Date()
+        var output = "🧪 Phase 1 Validation Test\n"
+        output += "📊 Testing with \(sensorData.count) sensor readings\n\n"
+
+        do {
+            // Create configuration
+            let config = PinchDetector.createDefaultConfig(sampleRate: 50.0)
+
+            // Load templates - using empty array for Phase 1 (no template matching yet)
+            let templates: [PinchTemplate] = []
+
+            // Create streaming detector
+            let streamingDetector = StreamingPinchDetector(config: config, templates: templates)
+            output += "✅ StreamingPinchDetector created successfully\n"
+
+            // Convert sensor data to frames using existing conversion
+            let frames = PinchDetector.convertSensorReadings(sensorData)
+            output += "✅ Converted \(frames.count) sensor readings to frames\n"
+
+            // Process through streaming pipeline
+            var fusedOutputs: [Float] = []
+            var baselines: [Float] = []
+            var sigmas: [Float] = []
+
+            for frame in frames {
+                let debugResult = streamingDetector.processSampleForDebug(frame: frame)
+                fusedOutputs.append(debugResult.fusedSignal)
+                baselines.append(debugResult.baseline)
+                sigmas.append(debugResult.sigma)
+            }
+
+            // Analyze results
+            let fusedRange = (fusedOutputs.min() ?? 0, fusedOutputs.max() ?? 0)
+            let baselineRange = (baselines.min() ?? 0, baselines.max() ?? 0)
+            let sigmaRange = (sigmas.min() ?? 0, sigmas.max() ?? 0)
+
+            output += "📈 Streaming Pipeline Results:\n"
+            output += "   • Fused signal range: [\(String(format: "%.3f", fusedRange.0)) - \(String(format: "%.3f", fusedRange.1))]\n"
+            output += "   • Baseline range: [\(String(format: "%.3f", baselineRange.0)) - \(String(format: "%.3f", baselineRange.1))]\n"
+            output += "   • Sigma range: [\(String(format: "%.3f", sigmaRange.0)) - \(String(format: "%.3f", sigmaRange.1))]\n"
+
+            // Check for reasonable values
+            let hasValidFused = fusedRange.1 > 0 && fusedRange.1.isFinite
+            let hasValidBaseline = baselineRange.1.isFinite && baselineRange.0.isFinite
+            let hasValidSigma = sigmaRange.1 > 0 && sigmaRange.1.isFinite
+
+            let processingTime = Date().timeIntervalSince(startTime) * 1000
+            output += "\n⏱️ Processing time: \(String(format: "%.1f", processingTime))ms\n"
+            output += "📊 Per-sample: \(String(format: "%.3f", processingTime / Double(sensorData.count)))ms\n\n"
+
+            if hasValidFused && hasValidBaseline && hasValidSigma {
+                output += "✅ VALIDATION PASSED\n"
+                output += "🎯 All pipeline stages producing valid output\n"
+                output += "⚡ Ready for Phase 2: Peak Detection State Machine"
+                return (true, output)
+            } else {
+                output += "❌ VALIDATION FAILED\n"
+                output += "   • Fused signal valid: \(hasValidFused)\n"
+                output += "   • Baseline valid: \(hasValidBaseline)\n"
+                output += "   • Sigma valid: \(hasValidSigma)"
+                return (false, output)
+            }
+
+        } catch {
+            output += "❌ VALIDATION FAILED\n"
+            output += "Error: \(error.localizedDescription)"
+            return (false, output)
+        }
     }
 }
 
