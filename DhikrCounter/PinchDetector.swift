@@ -446,25 +446,68 @@ public final class PinchDetector {
         return y
     }
     
-    private func slidingMedianMAD(_ x: [Float], winSec: Float, fs: Float) -> ([Float], [Float]) {
-        let W = max(3, Int(round(winSec * fs)) | 1) // Odd window
-        var med = [Float](repeating: 0, count: x.count)
-        var mad = [Float](repeating: 0, count: x.count)
+    /// O(1) streaming robust baseline and scale estimator
+    /// Replaces O(n log n) sliding median/MAD with Huber-EMA + windsorized scale
+    private class StreamingBaselineMAD {
+        private var baseline: Float = 0.0
+        private var scale: Float = 0.01
+        private let alpha: Float
+        private let beta: Float
+        private let huberC: Float = 2.5
+        private let winsorC: Float = 3.5
+        private let scaleMin: Float = 1e-6
+        private let absDevToSigma: Float = 1.2533141  // √(π/2) for mean absolute deviation → σ
+        private var initialized: Bool = false
         
-        for i in 0..<x.count {
-            let a = max(0, i - W/2)
-            let b = min(x.count, i + W/2 + 1)
-            var w = Array(x[a..<b])
-            w.sort()
-            let m = w[w.count/2]
-            var d = w.map { abs($0 - m) }
-            d.sort()
-            let md = d[d.count/2]
-            med[i] = m
-            mad[i] = md
+        init(winSec: Float, fs: Float) {
+            // Match effective window: α ≈ 2/(N_eff + 1) where N_eff ≈ winSec * fs
+            let nEff = winSec * fs
+            self.alpha = 2.0 / (nEff + 1.0)
+            self.beta = 2.0 / (nEff + 1.0)
         }
         
-        return (med, mad)
+        func update(_ x: Float) -> (baseline: Float, sigma: Float) {
+            if !initialized {
+                baseline = x
+                scale = max(abs(x) * 0.1, scaleMin)
+                initialized = true
+                return (baseline, scale * absDevToSigma)
+            }
+            
+            // Robust baseline update with Huber influence function
+            let residual = x - baseline
+            let scaleSafe = max(scale, scaleMin)
+            let u = residual / scaleSafe
+            let uClamped = min(max(u, -huberC), huberC)  // Huber clipping
+            baseline += alpha * scaleSafe * uClamped
+            
+            // Windsorized scale update (EW "MAD-like")
+            let absResidual = abs(residual)
+            let absWindsorized = min(absResidual, winsorC * scaleSafe)
+            scale = (1.0 - beta) * scale + beta * absWindsorized
+            
+            return (baseline, scale * absDevToSigma)
+        }
+    }
+    
+    /// O(1) streaming baseline and sigma estimation - replaces O(n log n) sliding window
+    private func streamingBaselineSigma(_ x: [Float], winSec: Float, fs: Float) -> ([Float], [Float]) {
+        guard !x.isEmpty else { return ([], []) }
+        
+        let estimator = StreamingBaselineMAD(winSec: winSec, fs: fs)
+        var baselines = [Float]()
+        var sigmas = [Float]()
+
+        baselines.reserveCapacity(x.count)
+        sigmas.reserveCapacity(x.count)
+
+        for sample in x {
+            let (baseline, sigma) = estimator.update(sample)
+            baselines.append(baseline)
+            sigmas.append(sigma)
+        }
+
+        return (baselines, sigmas)
     }
     
     private func detectPeaks(z: [Float], gate: [Float], refractorySec: Float, fs: Float) -> [PeakCandidate] {
@@ -611,11 +654,14 @@ public final class PinchDetector {
         sanitize(&accelTkeo); sanitize(&gyroTkeo)
         log("🔗 TKEO fusion: accel_L2 range [\(String(format: "%.2f", accelTkeo.min() ?? 0))-\(String(format: "%.2f", accelTkeo.max() ?? 0))], gyro_L2 range [\(String(format: "%.2f", gyroTkeo.min() ?? 0))-\(String(format: "%.2f", gyroTkeo.max() ?? 0))]")
 
-        // Robust z-normalization using sliding MAD
-        let (aMed, aMAD) = slidingMedianMAD(accelTkeo, winSec: config.madWinSec, fs: fs)
-        let (gMed, gMAD) = slidingMedianMAD(gyroTkeo,  winSec: config.madWinSec, fs: fs)
-        var accelZ = zip(accelTkeo, zip(aMed, aMAD)).map { (v, mm) in let (m, md) = mm; return md > 0 ? (v - m)/md : 0 }
-        var gyroZ = zip(gyroTkeo,  zip(gMed, gMAD)).map { (v, mm) in let (m, md) = mm; return md > 0 ? (v - m)/md : 0 }
+        // Robust z-normalization using streaming O(1) baseline/sigma (replaces O(n log n) sliding window)
+        let baselineStartTime = CFAbsoluteTimeGetCurrent()
+        let (aMed, aSigma) = streamingBaselineSigma(accelTkeo, winSec: config.madWinSec, fs: fs)
+        let (gMed, gSigma) = streamingBaselineSigma(gyroTkeo,  winSec: config.madWinSec, fs: fs)
+        let baselineTime = (CFAbsoluteTimeGetCurrent() - baselineStartTime) * 1000
+        log("📈 O(1) Streaming baseline: \(String(format: "%.2f", baselineTime))ms for \(accelTkeo.count + gyroTkeo.count) samples (was O(n²) with \(accelTkeo.count * 2 * Int(round(config.madWinSec * fs)))) sort operations)")
+        var accelZ = zip(accelTkeo, zip(aMed, aSigma)).map { (v, mm) in let (m, s) = mm; return s > 0 ? (v - m)/s : 0 }
+        var gyroZ = zip(gyroTkeo,  zip(gMed, gSigma)).map { (v, mm) in let (m, s) = mm; return s > 0 ? (v - m)/s : 0 }
         sanitize(&accelZ); sanitize(&gyroZ)
         log("📊 Z-score ranges: accel [\(String(format: "%.2f", accelZ.min() ?? 0))-\(String(format: "%.2f", accelZ.max() ?? 0))], gyro [\(String(format: "%.2f", gyroZ.min() ?? 0))-\(String(format: "%.2f", gyroZ.max() ?? 0))]")
 
@@ -628,11 +674,10 @@ public final class PinchDetector {
         sanitize(&fused)
         log("⚖️ Fused signal: range [\(String(format: "%.2f", fused.min() ?? 0))-\(String(format: "%.2f", fused.max() ?? 0))], weights: accel=\(config.accelWeight), gyro=\(config.gyroWeight)")
 
-        // Adaptive gating threshold = median + K·(MAD→σ)
-        let (fMed, fMAD) = slidingMedianMAD(fused, winSec: config.madWinSec, fs: fs)
-        let madToSigma: Float = 1.4826
-        var gate = zip(fMed, fMAD).map { (m, md) in m + config.gateK * madToSigma * max(md, 1e-3) }
-        log("🚪 Gate threshold: K=\(config.gateK)σ, range [\(String(format: "%.2f", gate.min() ?? 0))-\(String(format: "%.2f", gate.max() ?? 0))], baseline median [\(String(format: "%.2f", fMed.min() ?? 0))-\(String(format: "%.2f", fMed.max() ?? 0))]")
+        // Adaptive gating threshold = baseline + K·σ
+        let (fMed, fSigma) = streamingBaselineSigma(fused, winSec: config.madWinSec, fs: fs)
+        var gate = zip(fMed, fSigma).map { (m, s) in m + config.gateK * max(s, 1e-3) }
+        log("🚪 Gate threshold: K=\(config.gateK)σ, range [\(String(format: "%.2f", gate.min() ?? 0))-\(String(format: "%.2f", gate.max() ?? 0))], baseline [\(String(format: "%.2f", fMed.min() ?? 0))-\(String(format: "%.2f", fMed.max() ?? 0))]")
 
         // --- Bookend / motion veto (unchanged logic) ---
         let ignoreStartS = Int(round(config.ignoreStartMs * fs / 1000))
@@ -655,7 +700,7 @@ public final class PinchDetector {
             let rampS = Int(round(config.gateRampMs * fs / 1000))
             for i in 0..<min(rampS, gate.count) {
                 let w = 1 - Float(i) / Float(max(1, rampS - 1))
-                gate[i] += w * (3 * max(fMAD[i], 1e-3))
+                gate[i] += w * (3 * max(fSigma[i], 1e-3))
             }
         }
 
@@ -725,7 +770,7 @@ public final class PinchDetector {
         log("   • Zero-phase filtering (eliminates \(String(format: "%.1f", 1000.0/(2*fs)))ms phase lag)")
         log("   • Multi-scale templates (\(warpGrid.count) tightened warps per template)")
         log("   • ±\(maxShift) sample shift tolerance (tightened from ±2)")
-        log("   • Amplitude surplus guard (≥\(String(format: "%.1f", config.amplitudeSurplusThresh))σ over local MAD)")
+        log("   • Amplitude surplus guard (≥\(String(format: "%.1f", config.amplitudeSurplusThresh))σ over local baseline)")
         log("   • ISI guard (<\(String(format: "%.0f", config.isiThresholdMs))ms unless NCC≥0.90)")
         let mergeGapMs = max(config.isiThresholdMs, 180)  // consistent with ISI, min 180ms
         log("   • Near-duplicate merging (gap≥\(String(format: "%.0f", mergeGapMs))ms, preserve strong NCC≥0.90)")
@@ -775,12 +820,12 @@ public final class PinchDetector {
             let scale = scaleIdx >= 0 ? warpGrid[scaleIdx] : 1.0
             
             if bestNCC >= nccThresh {
-                // Amplitude surplus guard: require configurable σ over local MAD baseline
+                // Amplitude surplus guard: require configurable σ over local sigma baseline
                 let surplus = max(0, pk.value - gate[pk.index])
-                let localMAD = max(1e-6, fMAD[pk.index])
-                
-                guard surplus >= config.amplitudeSurplusThresh * localMAD else {
-                    candidateDetails.append("Peak[\(pkIdx)] @ \(String(format: "%.3f", t[pk.index]))s: ❌ REJECTED - insufficient amplitude surplus (\(String(format: "%.2f", surplus/localMAD))σ < \(String(format: "%.1f", config.amplitudeSurplusThresh))σ)")
+                let localSigma = max(1e-6, fSigma[pk.index])
+
+                guard surplus >= config.amplitudeSurplusThresh * localSigma else {
+                    candidateDetails.append("Peak[\(pkIdx)] @ \(String(format: "%.3f", t[pk.index]))s: ❌ REJECTED - insufficient amplitude surplus (\(String(format: "%.2f", surplus/localSigma))σ < \(String(format: "%.1f", config.amplitudeSurplusThresh))σ)")
                     continue
                 }
                 
@@ -793,8 +838,8 @@ public final class PinchDetector {
                     }
                 }
 
-                // Confidence: blend NCC + amplitude surplus 
-                let ampScore = min(surplus / (3.0 * localMAD), 1.0)
+                // Confidence: blend NCC + amplitude surplus
+                let ampScore = min(surplus / (3.0 * localSigma), 1.0)
                 let conf = 0.6 * bestNCC + 0.4 * ampScore
 
                 events.append(PinchEvent(tPeak: t[pk.index],
@@ -804,7 +849,7 @@ public final class PinchDetector {
                                          gateScore: pk.value,
                                          ncc: bestNCC))
                 
-                candidateDetails.append("Peak[\(pkIdx)] @ \(String(format: "%.3f", t[pk.index]))s: ✅ ACCEPTED - NCC=\(String(format: "%.3f", bestNCC)), tpl[\(originalTplIdx)], scale=\(String(format: "%.2f", scale)), shift=\(bestShift), surplus=\(String(format: "%.2f", surplus/localMAD))σ, comps=\(totalComparisons)\(earlyStop ? " (early)" : "")")
+                candidateDetails.append("Peak[\(pkIdx)] @ \(String(format: "%.3f", t[pk.index]))s: ✅ ACCEPTED - NCC=\(String(format: "%.3f", bestNCC)), tpl[\(originalTplIdx)], scale=\(String(format: "%.2f", scale)), shift=\(bestShift), surplus=\(String(format: "%.2f", surplus/localSigma))σ, comps=\(totalComparisons)\(earlyStop ? " (early)" : "")")
             } else {
                 candidateDetails.append("Peak[\(pkIdx)] @ \(String(format: "%.3f", t[pk.index]))s: ❌ REJECTED - NCC=\(String(format: "%.3f", bestNCC)) < \(String(format: "%.3f", nccThresh)), best: tpl[\(originalTplIdx)], scale=\(String(format: "%.2f", scale)), shift=\(bestShift)")
             }
