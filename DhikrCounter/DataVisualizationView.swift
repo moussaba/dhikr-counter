@@ -2081,7 +2081,8 @@ extension TKEODetectionCard {
             
             // Create fully configured PinchConfig reading all settings from UserDefaults
             let config = PinchConfig.fromUserDefaults(templates: templates)
-            let detector = PinchDetector(config: config, templates: templates)
+            let useTemplateValidation = UserDefaults.standard.bool(forKey: "tkeo_useTemplateValidation")
+            let detector = StreamingPinchDetector(config: config, templates: templates, useTemplateValidation: useTemplateValidation)
             
             await MainActor.run {
                 self.addDebugLog("📋 Loaded \(templates.count) templates from JSON file")
@@ -2097,16 +2098,31 @@ extension TKEODetectionCard {
                 self.addDebugLog("   Gate threshold: \(config.gateK)σ")
                 self.addDebugLog("   Weights: accel=\(config.accelWeight), gyro=\(config.gyroWeight)")
                 self.addDebugLog("   Template confidence: \(config.nccThresh)")
+                self.addDebugLog("   Template validation: \(useTemplateValidation ? "Enabled" : "Disabled")")
                 self.addDebugLog("📋 Template matching: \(templates.count) trained templates loaded")
             }
-            
-            // Debug logging handled by processWithDebugCallback below
-            
-            // Convert and process
+
+            // Convert and process with streaming detector
             let frames = PinchDetector.convertSensorReadings(sensorData)
-            let events = detector.processWithDebugCallback(frames: frames) { debugMessage in
-                Task { @MainActor in
-                    self.addDebugLog(debugMessage)
+            var events: [PinchEvent] = []
+
+            await MainActor.run {
+                self.addDebugLog("🔄 Processing \(frames.count) frames with streaming detector...")
+            }
+
+            for (index, frame) in frames.enumerated() {
+                if let event = detector.process(frame: frame) {
+                    events.append(event)
+                    await MainActor.run {
+                        self.addDebugLog("🎯 Event \(events.count): t=\(String(format: "%.3f", event.tPeak))s, confidence=\(String(format: "%.3f", event.confidence))")
+                    }
+                }
+
+                // Update progress every 500 frames
+                if index % 500 == 0 {
+                    await MainActor.run {
+                        self.addDebugLog("📊 Progress: \(index)/\(frames.count) frames processed")
+                    }
                 }
             }
             

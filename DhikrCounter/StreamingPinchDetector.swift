@@ -5,6 +5,7 @@ import Foundation
 public final class StreamingPinchDetector {
     private let config: PinchConfig
     private let templates: [PinchTemplate]
+    private let useTemplateValidation: Bool
 
     // Streaming DSP components - reusing existing types from PinchDetector
     private var accelXFilter: CausalBandpassFilter
@@ -23,13 +24,15 @@ public final class StreamingPinchDetector {
 
     private var baselineEstimator: StreamingBaselineMad
     private var peakDetector: StreamingPeakDetector
+    private var templateMatcher: StreamingTemplateMatcher
 
     // State tracking
     private var isInitialized: Bool = false
 
-    public init(config: PinchConfig, templates: [PinchTemplate]) {
+    public init(config: PinchConfig, templates: [PinchTemplate], useTemplateValidation: Bool = true) {
         self.config = config
         self.templates = templates
+        self.useTemplateValidation = useTemplateValidation
 
         // Initialize causal bandpass filters for each sensor axis
         self.accelXFilter = CausalBandpassFilter(fs: config.fs, low: config.bandpassLow, high: config.bandpassHigh)
@@ -55,6 +58,12 @@ public final class StreamingPinchDetector {
             refractoryMs: config.refractoryMs,
             gateK: config.gateK,
             fs: config.fs
+        )
+
+        // Initialize template matcher for Phase 3
+        self.templateMatcher = StreamingTemplateMatcher(
+            templates: templates,
+            config: config
         )
     }
 
@@ -87,19 +96,38 @@ public final class StreamingPinchDetector {
         // 4. Update baseline and sigma estimation
         let (baseline, sigma) = baselineEstimator.update(fusedSignal)
 
+        // Phase 3: Update template matcher with current signal for windowing
+        templateMatcher.addSample(fusedSignal, timestamp: frame.t)
+
         // Phase 2: Peak detection with streaming state machine
         let gateThreshold = baseline + config.gateK * max(sigma, 1e-3)
         if let peakCandidate = peakDetector.process(signal: fusedSignal, gate: gateThreshold, timestamp: frame.t) {
-            // TODO Phase 3: Template matching will go here
-            // For now, return a basic PinchEvent for testing
-            return PinchEvent(
-                tPeak: peakCandidate.timestamp,
-                tStart: peakCandidate.timestamp - 0.1,  // Placeholder start time
-                tEnd: peakCandidate.timestamp + 0.1,    // Placeholder end time
-                confidence: 0.8,                        // Placeholder confidence
-                gateScore: peakCandidate.value,         // Use peak value as gate score
-                ncc: 0.8                               // Placeholder NCC score
-            )
+            if useTemplateValidation {
+                // Phase 3: Template matching for detected peak
+                if let templateMatch = templateMatcher.matchTemplate(around: peakCandidate.timestamp) {
+                    return PinchEvent(
+                        tPeak: peakCandidate.timestamp,
+                        tStart: templateMatch.windowStart,
+                        tEnd: templateMatch.windowEnd,
+                        confidence: templateMatch.confidence,
+                        gateScore: peakCandidate.value,
+                        ncc: templateMatch.nccScore
+                    )
+                } else {
+                    // Peak detected but no good template match - reject
+                    return nil
+                }
+            } else {
+                // Phase 2 mode: Return peak without template validation
+                return PinchEvent(
+                    tPeak: peakCandidate.timestamp,
+                    tStart: peakCandidate.timestamp - 0.1, // Simple window
+                    tEnd: peakCandidate.timestamp + 0.1,
+                    confidence: 1.0, // High confidence for peak-only mode
+                    gateScore: peakCandidate.value,
+                    ncc: 0.0 // No NCC in peak-only mode
+                )
+            }
         }
 
         return nil
@@ -123,6 +151,7 @@ public final class StreamingPinchDetector {
 
         baselineEstimator = StreamingBaselineMad(winSec: config.madWinSec, fs: config.fs)
         peakDetector.reset()
+        templateMatcher.reset()
         isInitialized = false
     }
 
@@ -428,5 +457,244 @@ private final class StreamingPeakDetector {
         peakTimestamp = 0
         lastPeakTime = 0
         risingStartTime = 0
+    }
+}
+
+// MARK: - StreamingTemplateMatcher
+
+/// Phase 3: Template matching for streaming peak detection
+/// Maintains signal history buffer and performs NCC matching against templates
+private final class StreamingTemplateMatcher {
+
+    // Template match result
+    struct TemplateMatch {
+        let templateId: Int
+        let nccScore: Float
+        let confidence: Float
+        let windowStart: Double
+        let windowEnd: Double
+    }
+
+    // Configuration
+    private let templates: [PinchTemplate]
+    private let config: PinchConfig
+    private let nccThreshold: Float
+
+    // Signal history buffer for window extraction
+    private var signalBuffer: CircularBuffer<Float>
+    private var timestampBuffer: CircularBuffer<Double>
+    private let bufferSize: Int
+
+    init(templates: [PinchTemplate], config: PinchConfig) {
+        self.templates = templates
+        self.config = config
+        self.nccThreshold = config.nccThresh
+
+        // Calculate buffer size needed for template matching
+        // Need enough history to extract windows around peaks
+        let templateLength = templates.first?.vectorLength ?? 16
+        let maxWindowMs = Float(150 + 250) // preMs + postMs from batch implementation
+        let bufferDurationMs = maxWindowMs * 2.0 // Extra safety margin
+        self.bufferSize = Int(bufferDurationMs * config.fs / 1000.0)
+
+        self.signalBuffer = CircularBuffer<Float>(capacity: bufferSize)
+        self.timestampBuffer = CircularBuffer<Double>(capacity: bufferSize)
+    }
+
+    /// Add new signal sample to history buffer
+    func addSample(_ signal: Float, timestamp: Double) {
+        signalBuffer.append(signal)
+        timestampBuffer.append(timestamp)
+    }
+
+    /// Extract template window and find best matching template
+    func matchTemplate(around peakTimestamp: Double) -> TemplateMatch? {
+        guard !templates.isEmpty,
+              let templateLength = templates.first?.vectorLength,
+              signalBuffer.count >= templateLength else {
+            return nil
+        }
+
+        // Find the index closest to peak timestamp in our buffer
+        let timestamps = timestampBuffer.toArray()
+        let signals = signalBuffer.toArray()
+
+        guard let peakIndex = findClosestIndex(to: peakTimestamp, in: timestamps) else {
+            return nil
+        }
+
+        // Extract window around peak (similar to batch extractWindow)
+        let preMs: Float = 150.0  // From batch implementation
+        let postMs: Float = 250.0 // From batch implementation
+        let preS = Int(preMs * config.fs / 1000.0)
+        let postS = Int(postMs * config.fs / 1000.0)
+
+        let window = extractStreamingWindow(
+            center: peakIndex,
+            from: signals,
+            preS: preS,
+            postS: postS,
+            targetLength: templateLength
+        )
+
+        guard window.count == templateLength else {
+            return nil
+        }
+
+        // Find best matching template using NCC
+        var bestNCC: Float = 0
+        var bestTemplateId: Int = 0
+
+        for (templateId, template) in templates.enumerated() {
+            let nccScore = computeNCC(window: window, template: template.data)
+            if nccScore > bestNCC {
+                bestNCC = nccScore
+                bestTemplateId = templateId
+            }
+        }
+
+        // Check if best match exceeds threshold
+        guard bestNCC >= nccThreshold else {
+            return nil
+        }
+
+        // Calculate window timing
+        let windowStartIndex = max(0, peakIndex - preS)
+        let windowEndIndex = min(timestamps.count - 1, peakIndex + postS)
+        let windowStart = timestamps[windowStartIndex]
+        let windowEnd = timestamps[windowEndIndex]
+
+        return TemplateMatch(
+            templateId: bestTemplateId,
+            nccScore: bestNCC,
+            confidence: bestNCC, // Use NCC as confidence for now
+            windowStart: windowStart,
+            windowEnd: windowEnd
+        )
+    }
+
+    /// Reset all internal state
+    func reset() {
+        signalBuffer.removeAll()
+        timestampBuffer.removeAll()
+    }
+
+    // MARK: - Helper Methods
+
+    private func findClosestIndex(to timestamp: Double, in timestamps: [Double]) -> Int? {
+        guard !timestamps.isEmpty else { return nil }
+
+        var closestIndex = 0
+        var minDiff = abs(timestamps[0] - timestamp)
+
+        for (index, ts) in timestamps.enumerated() {
+            let diff = abs(ts - timestamp)
+            if diff < minDiff {
+                minDiff = diff
+                closestIndex = index
+            }
+        }
+
+        return closestIndex
+    }
+
+    private func extractStreamingWindow(center: Int, from signals: [Float], preS: Int, postS: Int, targetLength: Int) -> [Float] {
+        let startIndex = max(0, center - preS)
+        let endIndex = min(signals.count - 1, center + postS)
+
+        var window = Array(signals[startIndex...endIndex])
+
+        // Pad if necessary (edge handling like batch implementation)
+        if window.count < targetLength {
+            let shortfall = targetLength - window.count
+            if startIndex == 0 {
+                // Pad at beginning
+                let padding = Array(repeating: signals.first ?? 0, count: shortfall)
+                window = padding + window
+            } else if endIndex == signals.count - 1 {
+                // Pad at end
+                let padding = Array(repeating: signals.last ?? 0, count: shortfall)
+                window = window + padding
+            }
+        }
+
+        // Trim to exact length
+        return Array(window.prefix(targetLength))
+    }
+
+    private func computeNCC(window: [Float], template: [Float]) -> Float {
+        guard window.count == template.count else { return 0.0 }
+
+        let windowMean = window.reduce(0, +) / Float(window.count)
+        let templateMean = template.reduce(0, +) / Float(template.count)
+
+        let windowCentered = window.map { $0 - windowMean }
+        let templateCentered = template.map { $0 - templateMean }
+
+        var numerator: Float = 0
+        for i in 0..<windowCentered.count {
+            numerator += windowCentered[i] * templateCentered[i]
+        }
+
+        let windowSumSq = windowCentered.map { $0 * $0 }.reduce(0, +)
+        let templateSumSq = templateCentered.map { $0 * $0 }.reduce(0, +)
+
+        let denominator = sqrt(windowSumSq * templateSumSq)
+        guard denominator > 1e-6 else { return 0.0 }
+
+        return numerator / denominator
+    }
+}
+
+// MARK: - CircularBuffer
+
+/// Efficient circular buffer for signal history
+private struct CircularBuffer<T> {
+    private var buffer: [T?]
+    private var head: Int = 0
+    private var tail: Int = 0
+    private var _count: Int = 0
+    private let capacity: Int
+
+    init(capacity: Int) {
+        self.capacity = capacity
+        self.buffer = Array(repeating: nil, count: capacity)
+    }
+
+    var count: Int { _count }
+    var isEmpty: Bool { _count == 0 }
+
+    mutating func append(_ element: T) {
+        buffer[tail] = element
+        tail = (tail + 1) % capacity
+
+        if _count < capacity {
+            _count += 1
+        } else {
+            head = (head + 1) % capacity
+        }
+    }
+
+    mutating func removeAll() {
+        head = 0
+        tail = 0
+        _count = 0
+        buffer = Array(repeating: nil, count: capacity)
+    }
+
+    func toArray() -> [T] {
+        guard _count > 0 else { return [] }
+
+        var result: [T] = []
+        result.reserveCapacity(_count)
+
+        for i in 0..<_count {
+            let index = (head + i) % capacity
+            if let element = buffer[index] {
+                result.append(element)
+            }
+        }
+
+        return result
     }
 }
