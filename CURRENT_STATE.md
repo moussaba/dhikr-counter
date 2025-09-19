@@ -1,178 +1,103 @@
-# TKEO Pinch Detection - Swift iOS Implementation Current State
+# Current State: Phase 1 Complete - Ready for Phase 2
 
-**Date**: September 7, 2025 01:36 AM  
-**Status**: ✅ WORKING - All Major Issues Resolved
+**Date**: 2025-01-19
+**Branch**: `phase1-streaming-pinch-detector`
+**Last Commit**: `661309e` - "Implement Phase 1: Streaming DSP Core for real-time pinch detection"
 
-## Recent Session Summary
-Fixed critical template matching issues that were causing NCC scores to return 0.000. The main problem was window length mismatch - runtime extraction was producing ~20 sample windows while templates were 16 samples. Also reduced excessive debug logging from 100+ individual event logs to concise summaries.
+## Project Context
+Implementing real-time pinch detection for Apple Watch to eliminate iPhone dependency. Following the plan in `WATCH_REALTIME_DETECTION_PLAN.md`.
 
-## Current Features Implemented ✅
+**Issues being addressed**: #28 (Port PinchDetector to Watch), #30 (Integrate StreamingPinchDetector), #22 (Real-time TKEO on Watch)
 
-### **Core Swift TKEO Implementation**
-- **Multi-template matching**: Iterates through ALL 12 trained templates for each peak candidate
-- **Window length enforcement**: Fixed to extract exactly 16 samples to match template length
-- **NCC template matching**: Proper normalized cross-correlation with length validation
-- **Settings integration**: All parameters read from UserDefaults settings screen
-- **Refractory period**: Prevents duplicate detections within configurable time window
+## Phase 1: ✅ COMPLETED
 
-### **Template System**
-- **Template count**: 12 trained templates loaded from `trained_templates.json`
-- **Template length**: 16 samples each (enforced for NCC matching)
-- **Template loading**: `PinchDetector.loadTrainedTemplates()` method
-- **Best match selection**: Tests all templates, keeps highest confidence above threshold
+### What was implemented:
+- **StreamingPinchDetector.swift**: Core streaming DSP pipeline
+  - Single-sample processing API: `process(frame: SensorFrame) -> PinchEvent?`
+  - Causal filtering (no zero-phase delay for real-time)
+  - TKEO operators with 3-sample sliding buffers
+  - L2 sensor fusion (accelerometer + gyroscope)
+  - Reuses O(1) StreamingBaselineMad from Issue #27
 
-### **Configuration System**
-- **Settings UI**: `/Users/moussaba/dev/zikr/DhikrCounter/TKEOConfigurationView.swift`
-- **UserDefaults integration**: All parameters properly stored and loaded
-- **Real-time tuning**: Sliders for thresholds, weights, filtering parameters
-- **Parameters available**:
-  - Sample Rate: 50 Hz (fixed)
-  - Bandpass Filter: 3.0-20.0 Hz (adjustable)
-  - Gate Threshold: 3.5σ (adjustable 2.0-5.0)
-  - NCC Threshold: 0.6 (adjustable 0.3-0.8)
-  - Sensor Weights: Accel=1.0, Gyro=1.5 (adjustable)
-  - Refractory Period: 150ms (adjustable)
+- **Phase1ValidationView**: Test interface in CompanionContentView.swift
+  - Validates streaming pipeline produces reasonable outputs
+  - Copy button for full test results
+  - Tests on real sensor data from Watch sessions
 
-### **Debug Interface**
-- **Location**: `/Users/moussaba/dev/zikr/DhikrCounter/DebugView.swift`
-- **Mock TKEO testing**: Simplified debug implementation for build compatibility
-- **Synthetic data generation**: Creates test signals with known pinch events
-- **Detailed logging**: Step-by-step analysis output with DebugManager
+### Key architectural decisions:
+- **Causal filtering only**: Eliminates `bandpassZeroPhase` (uses future data)
+- **Component-based design**: Small stateful helpers for each pipeline stage
+- **Fixed-size buffers**: Circular buffers for Watch memory constraints
+- **Streaming state machines**: Replace batch array operations
 
-## Critical Fixes Applied This Session ✅
+### Validation results:
+✅ Fused signal range: [0.000 - 0.625]
+✅ Baseline range: [0.002 - 0.018]
+✅ Sigma range: [0.000 - 0.016]
+✅ Processing: <1ms per sample (much faster than batch)
 
-### **1. Template Length Mismatch (RESOLVED)**
-- **Problem**: Window extraction was producing ~20 samples vs 16-sample templates
-- **Root cause**: Pre/post window calculation (150ms + 250ms at 50Hz = ~20 samples)
-- **Solution**: Enforce exact template length in window extraction:
-```swift
-// Extract exactly L samples with proper pre/post ratio
-let L = templates.first?.vectorLength ?? 0
-let preSamples = Int(round(Float(L - 1) * preRatio))
-let postSamples = L - 1 - preSamples
+## IMMEDIATE NEXT STEP: Phase 2 Implementation
 
-// Pad or trim to exactly L samples
-if window.count < L {
-    // Add padding for boundary cases
-} else if window.count > L {
-    window = Array(window[0..<L])  // Trim to exact length
-}
-```
+### Phase 2: Peak Detection State Machine (Week 1-2)
 
-### **2. Settings Integration (RESOLVED)**
-- **Problem**: PinchDetector was using hardcoded defaults instead of settings
-- **Solution**: Load all parameters from UserDefaults in DataVisualizationView:
-```swift
-let sampleRate = UserDefaults.standard.float(forKey: "tkeo_sampleRate")
-let bandpassLow = UserDefaults.standard.float(forKey: "tkeo_bandpassLow")
-// ... all other parameters
-let config = PinchConfig(fs: sampleRate, bandpassLow: bandpassLow, ...)
-```
+**Goal**: Replace batch peak detection with streaming state machine
 
-### **3. Multi-Template Matching (IMPLEMENTED)**
-- **Requirement**: "NO we want to iterate over all templates to try to find a match. Don't take shortcuts"
-- **Implementation**: Modified PinchDetector to accept multiple templates and test all for each peak
-- **Template loading**: All 12 templates from JSON loaded and used
+**Key components to implement:**
 
-### **4. Excessive Debug Logging (RESOLVED)**  
-- **Problem**: 100+ individual event logs flooding debug output
-- **Solution**: Smart summary for large result sets:
-```swift
-if events.count <= 5 {
-    // Show individual events for small sets
-} else {
-    // Show summary statistics for large sets
-    let avgConfidence = events.map { $0.confidence }.reduce(0, +) / Float(events.count)
-    // Show avg/min/max/timespan instead of all events
-}
-```
+1. **StreamingPeakDetector state machine**:
+   ```swift
+   enum PeakState { case belowGate, rising, falling }
+   ```
+   - Gate threshold computation per sample
+   - State transitions: belowGate → rising → falling → belowGate
+   - Refractory period tracking (150-200ms)
 
-## Architecture Overview
+2. **Integration into StreamingPinchDetector**:
+   - Add `StreamingPeakDetector` instance
+   - Process fused signal through peak detector
+   - Return peak candidates with timestamps
 
-### **File Structure**
-- **Main Algorithm**: `/Users/moussaba/dev/zikr/DhikrCounter/PinchDetector.swift`
-- **Settings UI**: `/Users/moussaba/dev/zikr/DhikrCounter/TKEOConfigurationView.swift`
-- **Data Analysis**: `/Users/moussaba/dev/zikr/DhikrCounter/DataVisualizationView.swift`
-- **Debug Interface**: `/Users/moussaba/dev/zikr/DhikrCounter/DebugView.swift`
-- **Templates**: `/Users/moussaba/dev/zikr/trained_templates.json` (12 templates, 16 samples each)
+3. **Gyro veto mechanism**:
+   - Replace array-based logic (lines 693-697 in PinchDetector.swift)
+   - Implement as run-length counter for streaming
 
-### **Processing Pipeline**
-```
-1. Load sensor data from Watch → iPhone transfer
-2. Load all 12 trained templates from JSON
-3. Create PinchConfig from UserDefaults settings
-4. Apply TKEO to fused accelerometer + gyroscope signal
-5. Detect peaks using adaptive gate threshold
-6. For each peak candidate:
-   - Extract exactly 16-sample window around peak
-   - Test against ALL 12 templates via NCC
-   - Keep best match if confidence > threshold
-7. Apply refractory period filtering
-8. Return list of PinchEvent objects with timestamps and confidence
-```
+**Files to modify:**
+- `DhikrCounter/StreamingPinchDetector.swift`: Add peak detection
+- `DhikrCounter/CompanionContentView.swift`: Update validation to test peaks
 
-### **Configuration Flow**
-```
-Settings Screen → UserDefaults → DataVisualizationView → PinchConfig → PinchDetector
-```
+**Validation criteria:**
+- Peak timing matches batch version (±phase delay from causal filtering)
+- Refractory period correctly enforced
+- Gate threshold computation matches batch algorithm
 
-## Current Performance Status ✅
+### Phase 2 Implementation Steps:
 
-- **Template Loading**: ✅ All 12 templates loaded successfully
-- **NCC Matching**: ✅ Proper scores (no more 0.000 due to length mismatch)
-- **Settings Integration**: ✅ All parameters from UI applied correctly
-- **Multi-template Testing**: ✅ All templates checked for each peak candidate
-- **Debug Output**: ✅ Clean, concise logging with statistics
-- **Build Status**: ✅ Compiles and installs successfully
+1. **Add StreamingPeakDetector class** to StreamingPinchDetector.swift
+2. **Implement state machine logic** with proper transitions
+3. **Add refractory period tracking** (time-based, not sample-based)
+4. **Integrate with main process() method**
+5. **Update Phase1ValidationView** to show peak detection results
+6. **Test and validate** peak timing vs batch implementation
 
-## Debug Output Examples
+### Key Code References (from existing PinchDetector.swift):
+- Gate threshold logic: Look at how `gateThreshold` is computed
+- Peak detection algorithm: Lines 513-532 (batch version to convert)
+- Refractory period: How it's currently implemented in batch
+- Gyro veto: Lines 693-697 (array logic to convert to streaming)
 
-### **Before Fix (Excessive)**
-```
-1. [01:36:08.133] Event 75: t=1757190719.807s, confidence=0.715
-2. [01:36:08.133] Event 76: t=1757190721.495s, confidence=0.744
-... (100+ more individual event logs)
-```
+### Success Criteria for Phase 2:
+- Streaming detector finds peaks in real-time
+- Peak timing within ±20ms of batch version (accounting for causal delay)
+- Refractory period prevents false triggers
+- Processing remains <0.5ms per sample
 
-### **After Fix (Concise)**
-```
-🎉 SUCCESS: 124 pinch events detected!
-📊 Events summary: avg=0.742, range=0.507-0.915
-⏱️ Time span: 33.2s
-🔍 First event: t=1757190687.549s, conf=0.715
-🏁 Last event: t=1757190730.420s, conf=0.824
-```
+## Current Environment:
+- **Xcode**: Building successfully for iPhone 16 Pro simulator
+- **App**: Installed and running with Phase 1 validation interface
+- **Git**: Clean working tree, ready for Phase 2 branch
 
-## Build & Installation Status ✅
-
-- **Compilation**: ✅ Successful with minor Swift 6 warnings (non-critical)
-- **Installation**: ✅ Installed on iPhone 16 Pro Max simulator
-- **Template File**: ✅ Included in app bundle
-- **Settings Persistence**: ✅ UserDefaults working correctly
-
-## Completed Tasks ✅
-
-1. ✅ Fix template length mismatch causing NCC=0.000 scores
-2. ✅ Test updated TKEO detection with proper template matching  
-3. ✅ Reduce excessive debug logging from TKEO detection
-
-## Next Steps (Optional)
-
-- Performance testing with real pinch sessions from Watch
-- Threshold tuning based on actual usage patterns
-- Template confidence analysis for different users
-- Integration with Watch app's real-time detection
-
-## Technical Notes
-
-### **Key Learnings**
-- Window length MUST exactly match template length for NCC to work
-- Multiple template testing significantly improves detection accuracy
-- Debug output can overwhelm users - summaries are better for large result sets
-- UserDefaults integration requires explicit parameter loading in analysis code
-
-### **Critical Code Sections**
-- **Window extraction**: `DhikrCounter/PinchDetector.swift:~400` (enforce exact length)
-- **Settings loading**: `DhikrCounter/DataVisualizationView.swift:~2000` (UserDefaults)
-- **Template loading**: `DhikrCounter/PinchDetector.swift:~100` (JSON parsing)
-- **Debug output**: `DhikrCounter/DataVisualizationView.swift:~2094` (smart summaries)
+## Notes for Resume:
+- Phase 1 validation interface is working - use it to test Phase 2
+- The streaming DSP core is solid, focus on peak detection state machine
+- Consider causal delay (~10-20ms) when comparing peak timing
+- Template matching (Phase 3) comes after peak detection works
