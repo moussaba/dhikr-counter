@@ -1,4 +1,5 @@
 import Foundation
+import Accelerate
 
 /// Phase 1: Streaming DSP Core for real-time pinch detection
 /// Implements single-sample processing with causal filtering only
@@ -625,19 +626,33 @@ private final class StreamingTemplateMatcher {
     private func computeNCC(window: [Float], template: [Float]) -> Float {
         guard window.count == template.count else { return 0.0 }
 
-        let windowMean = window.reduce(0, +) / Float(window.count)
-        let templateMean = template.reduce(0, +) / Float(template.count)
+        let count = vDSP_Length(window.count)
+        guard count > 0 else { return 0.0 }
 
-        let windowCentered = window.map { $0 - windowMean }
-        let templateCentered = template.map { $0 - templateMean }
+        // Compute means using vDSP
+        var windowMean: Float = 0
+        var templateMean: Float = 0
+        vDSP_meanv(window, 1, &windowMean, count)
+        vDSP_meanv(template, 1, &templateMean, count)
 
+        // Center the signals (subtract mean) using vDSP
+        var windowCentered = Array<Float>(repeating: 0, count: window.count)
+        var templateCentered = Array<Float>(repeating: 0, count: template.count)
+
+        var negativeWindowMean = -windowMean
+        var negativeTemplateMean = -templateMean
+        vDSP_vsadd(window, 1, &negativeWindowMean, &windowCentered, 1, count)
+        vDSP_vsadd(template, 1, &negativeTemplateMean, &templateCentered, 1, count)
+
+        // Compute dot product for numerator using vDSP
         var numerator: Float = 0
-        for i in 0..<windowCentered.count {
-            numerator += windowCentered[i] * templateCentered[i]
-        }
+        vDSP_dotpr(windowCentered, 1, templateCentered, 1, &numerator, count)
 
-        let windowSumSq = windowCentered.map { $0 * $0 }.reduce(0, +)
-        let templateSumSq = templateCentered.map { $0 * $0 }.reduce(0, +)
+        // Compute sum of squares for denominator using vDSP
+        var windowSumSq: Float = 0
+        var templateSumSq: Float = 0
+        vDSP_svesq(windowCentered, 1, &windowSumSq, count)
+        vDSP_svesq(templateCentered, 1, &templateSumSq, count)
 
         let denominator = sqrt(windowSumSq * templateSumSq)
         guard denominator > 1e-6 else { return 0.0 }
