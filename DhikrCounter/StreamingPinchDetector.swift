@@ -29,11 +29,19 @@ public final class StreamingPinchDetector {
 
     // State tracking
     private var isInitialized: Bool = false
+    private var lastEventTime: Double = 0  // For ISI threshold tracking
+
+    // Gyro veto state (run-length counter)
+    private var gyroQuietRunLength: Int = 0  // Consecutive samples below threshold
+    private let gyroHoldSamples: Int         // Required quiet run length
 
     public init(config: PinchConfig, templates: [PinchTemplate], useTemplateValidation: Bool = true) {
         self.config = config
         self.templates = templates
         self.useTemplateValidation = useTemplateValidation
+
+        // Initialize gyro veto parameters
+        self.gyroHoldSamples = max(1, Int(round(config.gyroVetoHoldMs * config.fs / 1000)))
 
         // Initialize causal bandpass filters for each sensor axis
         self.accelXFilter = CausalBandpassFilter(fs: config.fs, low: config.bandpassLow, high: config.bandpassHigh)
@@ -97,20 +105,66 @@ public final class StreamingPinchDetector {
         // 4. Update baseline and sigma estimation
         let (baseline, sigma) = baselineEstimator.update(fusedSignal)
 
+        // 5. Update gyro veto run-length counter (uses raw gyro magnitude)
+        let gyroMag = sqrt(frame.gx*frame.gx + frame.gy*frame.gy + frame.gz*frame.gz)
+        if gyroMag <= config.gyroVetoThresh {
+            gyroQuietRunLength += 1
+        } else {
+            gyroQuietRunLength = 0
+        }
+        let motionOK = gyroQuietRunLength >= gyroHoldSamples
+
         // Phase 3: Update template matcher with current signal for windowing
         templateMatcher.addSample(fusedSignal, timestamp: frame.t)
 
         // Phase 2: Peak detection with streaming state machine
         let gateThreshold = baseline + config.gateK * max(sigma, 1e-3)
+
+        // Quality gate 0: Gyro veto - only process peaks when motion has been stable
+        guard motionOK else {
+            // Still run peak detection to update state machine, but don't return events
+            _ = peakDetector.process(signal: fusedSignal, gate: gateThreshold, timestamp: frame.t)
+            return nil
+        }
+
         if let peakCandidate = peakDetector.process(signal: fusedSignal, gate: gateThreshold, timestamp: frame.t) {
+
+            // Quality gate 1: Amplitude surplus guard
+            // Require peak to exceed gate by configurable σ (amplitudeSurplusThresh)
+            let surplus = max(0, peakCandidate.value - gateThreshold)
+            let localSigma = max(1e-6, sigma)
+            guard surplus >= config.amplitudeSurplusThresh * localSigma else {
+                // Peak rejected: insufficient amplitude surplus
+                return nil
+            }
+
+            // Quality gate 2: ISI threshold guard
+            // Reject if too close to previous event (unless very high NCC later)
+            let timeSinceLast = peakCandidate.timestamp - lastEventTime
+            let isiThresholdSec = Double(config.isiThresholdMs / 1000.0)
+
             if useTemplateValidation {
                 // Phase 3: Template matching for detected peak
                 if let templateMatch = templateMatcher.matchTemplate(around: peakCandidate.timestamp) {
+
+                    // ISI check with NCC exception: reject if too close unless NCC >= 0.90
+                    if timeSinceLast < isiThresholdSec && templateMatch.nccScore < 0.90 {
+                        // Peak rejected: ISI too short and NCC not high enough
+                        return nil
+                    }
+
+                    // Compute blended confidence: 60% NCC + 40% amplitude surplus score
+                    let ampScore = min(surplus / (3.0 * localSigma), 1.0)
+                    let blendedConfidence = 0.6 * templateMatch.nccScore + 0.4 * ampScore
+
+                    // Update last event time
+                    lastEventTime = peakCandidate.timestamp
+
                     return PinchEvent(
                         tPeak: peakCandidate.timestamp,
                         tStart: templateMatch.windowStart,
                         tEnd: templateMatch.windowEnd,
-                        confidence: templateMatch.confidence,
+                        confidence: blendedConfidence,
                         gateScore: peakCandidate.value,
                         ncc: templateMatch.nccScore
                     )
@@ -120,6 +174,15 @@ public final class StreamingPinchDetector {
                 }
             } else {
                 // Phase 2 mode: Return peak without template validation
+                // ISI check without NCC exception
+                if timeSinceLast < isiThresholdSec {
+                    // Peak rejected: ISI too short (no template to override)
+                    return nil
+                }
+
+                // Update last event time
+                lastEventTime = peakCandidate.timestamp
+
                 return PinchEvent(
                     tPeak: peakCandidate.timestamp,
                     tStart: peakCandidate.timestamp - 0.1, // Simple window
@@ -154,6 +217,8 @@ public final class StreamingPinchDetector {
         peakDetector.reset()
         templateMatcher.reset()
         isInitialized = false
+        lastEventTime = 0
+        gyroQuietRunLength = 0
     }
 
     /// Get current fused signal value and baseline/sigma for debugging/validation
@@ -465,21 +530,28 @@ private final class StreamingPeakDetector {
 
 /// Phase 3: Template matching for streaming peak detection
 /// Maintains signal history buffer and performs NCC matching against templates
+/// Pre-expands templates with time-warp grid for variation tolerance
 private final class StreamingTemplateMatcher {
 
     // Template match result
     struct TemplateMatch {
-        let templateId: Int
+        let templateId: Int       // Original template index (before expansion)
         let nccScore: Float
         let confidence: Float
         let windowStart: Double
         let windowEnd: Double
+        let warpScale: Float      // Time-warp scale used
+        let shiftSamples: Int     // Shift applied
     }
 
     // Configuration
-    private let templates: [PinchTemplate]
+    private let originalTemplates: [PinchTemplate]  // Original templates for reference
+    private let expandedTemplates: [[Float]]        // Pre-expanded with time-warp
     private let config: PinchConfig
     private let nccThreshold: Float
+    private let warpGrid: [Float] = [0.95, 1.00, 1.05]  // Time-warp scales
+    private let maxShift: Int = 1                        // ±1 sample shift tolerance
+    private let targetLength: Int                        // Unified template length (L)
 
     // Signal history buffer for window extraction
     private var signalBuffer: CircularBuffer<Float>
@@ -487,19 +559,74 @@ private final class StreamingTemplateMatcher {
     private let bufferSize: Int
 
     init(templates: [PinchTemplate], config: PinchConfig) {
-        self.templates = templates
+        self.originalTemplates = templates
         self.config = config
         self.nccThreshold = config.nccThresh
 
+        // Calculate target length L for all templates
+        let L = templates.first?.vectorLength ?? 16
+        self.targetLength = L
+
+        // Pre-expand templates with time-warp grid
+        // This creates templates.count * warpGrid.count expanded templates
+        var expanded: [[Float]] = []
+        expanded.reserveCapacity(templates.count * warpGrid.count)
+
+        for template in templates {
+            for scale in warpGrid {
+                let warped = StreamingTemplateMatcher.resampleLinear(template.data, scale: scale, targetCount: L)
+                expanded.append(warped)
+            }
+        }
+        self.expandedTemplates = expanded
+
         // Calculate buffer size needed for template matching
         // Need enough history to extract windows around peaks
-        let templateLength = templates.first?.vectorLength ?? 16
         let maxWindowMs = Float(150 + 250) // preMs + postMs from batch implementation
         let bufferDurationMs = maxWindowMs * 2.0 // Extra safety margin
         self.bufferSize = Int(bufferDurationMs * config.fs / 1000.0)
 
         self.signalBuffer = CircularBuffer<Float>(capacity: bufferSize)
         self.timestampBuffer = CircularBuffer<Double>(capacity: bufferSize)
+    }
+
+    // MARK: - Static Resampling (used during init)
+
+    /// Linear resampling with optional time-warp factor `scale`.
+    /// Example: scale=0.9 compresses (faster gesture), 1.1 stretches (slower gesture).
+    private static func resampleLinear(_ x: [Float], scale: Float, targetCount L: Int) -> [Float] {
+        guard !x.isEmpty, L > 0 else { return [Float](repeating: 0, count: max(L, 0)) }
+
+        // Virtual source length after warp
+        let virtualCount = max(2, Int(round(Float(x.count) * scale)))
+
+        // Map target index -> source position (0 ..< virtualCount-1), then back into x's index space.
+        var y = [Float](repeating: 0, count: L)
+        for i in 0..<L {
+            let u = (Float(i) / Float(max(L - 1, 1))) * Float(virtualCount - 1)
+            // Map u into original x domain (scale back)
+            let s = u / max(scale, 1e-6)
+            let sClamped = min(max(s, 0), Float(x.count - 1))
+
+            let i0 = Int(floor(sClamped))
+            let i1 = min(i0 + 1, x.count - 1)
+            let w  = sClamped - Float(i0)
+            y[i] = (1 - w) * x[i0] + w * x[i1]
+        }
+        return y
+    }
+
+    /// Shift an array by `k` samples (positive = delay). Pads with edge samples.
+    private func shiftArray(_ x: [Float], by k: Int) -> [Float] {
+        guard !x.isEmpty, k != 0 else { return x }
+        let n = x.count
+        if k > 0 {
+            let head = [Float](repeating: x.first!, count: k)
+            return Array((head + x).prefix(n))
+        } else {
+            let tail = [Float](repeating: x.last!, count: -k)
+            return Array((x + tail).suffix(n))
+        }
     }
 
     /// Add new signal sample to history buffer
@@ -509,10 +636,10 @@ private final class StreamingTemplateMatcher {
     }
 
     /// Extract template window and find best matching template
+    /// Uses pre-expanded templates with time-warp and shift tolerance
     func matchTemplate(around peakTimestamp: Double) -> TemplateMatch? {
-        guard !templates.isEmpty,
-              let templateLength = templates.first?.vectorLength,
-              signalBuffer.count >= templateLength else {
+        guard !expandedTemplates.isEmpty,
+              signalBuffer.count >= targetLength else {
             return nil
         }
 
@@ -535,29 +662,51 @@ private final class StreamingTemplateMatcher {
             from: signals,
             preS: preS,
             postS: postS,
-            targetLength: templateLength
+            targetLength: targetLength
         )
 
-        guard window.count == templateLength else {
+        guard window.count == targetLength else {
             return nil
         }
 
-        // Find best matching template using NCC
+        // Find best matching template using NCC with shift tolerance
+        // Search across all expanded templates (original × warpGrid) and shifts (±maxShift)
         var bestNCC: Float = 0
-        var bestTemplateId: Int = 0
+        var bestExpandedIdx: Int = 0
+        var bestShift: Int = 0
+        var earlyStop = false
 
-        for (templateId, template) in templates.enumerated() {
-            let nccScore = computeNCC(window: window, template: template.data)
-            if nccScore > bestNCC {
-                bestNCC = nccScore
-                bestTemplateId = templateId
+        for (expandedIdx, expandedTemplate) in expandedTemplates.enumerated() {
+            // Try shifts by shifting the template (pad with edges)
+            for shift in -maxShift...maxShift {
+                let shiftedTemplate = shiftArray(expandedTemplate, by: shift)
+                let score = computeNCC(window: window, template: shiftedTemplate)
+
+                if score > bestNCC {
+                    bestNCC = score
+                    bestExpandedIdx = expandedIdx
+                    bestShift = shift
+                }
+
+                // Early exit for very high scores (>0.95)
+                if bestNCC >= 0.95 {
+                    earlyStop = true
+                    break
+                }
             }
+            if earlyStop { break }
         }
 
         // Check if best match exceeds threshold
         guard bestNCC >= nccThreshold else {
             return nil
         }
+
+        // Decode which original template and warp scale was used
+        let warpGridCount = warpGrid.count
+        let originalTemplateId = bestExpandedIdx / warpGridCount
+        let scaleIdx = bestExpandedIdx % warpGridCount
+        let usedScale = warpGrid[scaleIdx]
 
         // Calculate window timing
         let windowStartIndex = max(0, peakIndex - preS)
@@ -566,11 +715,13 @@ private final class StreamingTemplateMatcher {
         let windowEnd = timestamps[windowEndIndex]
 
         return TemplateMatch(
-            templateId: bestTemplateId,
+            templateId: originalTemplateId,
             nccScore: bestNCC,
             confidence: bestNCC, // Use NCC as confidence for now
             windowStart: windowStart,
-            windowEnd: windowEnd
+            windowEnd: windowEnd,
+            warpScale: usedScale,
+            shiftSamples: bestShift
         )
     }
 
