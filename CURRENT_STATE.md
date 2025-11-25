@@ -1,8 +1,8 @@
-# Current State: Phase 1 Complete - Ready for Phase 2
+# Current State: Phase 3 Complete - Ready for Watch Deployment
 
-**Date**: 2025-01-19
-**Branch**: `phase1-streaming-pinch-detector`
-**Last Commit**: `661309e` - "Implement Phase 1: Streaming DSP Core for real-time pinch detection"
+**Date**: 2025-11-24
+**Branch**: `phase3-template-matching`
+**Last Commit**: `1c3f722` - "Add TemplateRecorder for capturing new pinch patterns"
 
 ## Project Context
 Implementing real-time pinch detection for Apple Watch to eliminate iPhone dependency. Following the plan in `WATCH_REALTIME_DETECTION_PLAN.md`.
@@ -10,94 +10,136 @@ Implementing real-time pinch detection for Apple Watch to eliminate iPhone depen
 **Issues being addressed**: #28 (Port PinchDetector to Watch), #30 (Integrate StreamingPinchDetector), #22 (Real-time TKEO on Watch)
 
 ## Phase 1: ✅ COMPLETED
+- StreamingPinchDetector.swift core streaming DSP pipeline
+- Single-sample processing API: `process(frame: SensorFrame) -> PinchEvent?`
+- Causal filtering, TKEO operators, L2 sensor fusion
+- Reuses O(1) StreamingBaselineMad
+
+## Phase 2: ✅ COMPLETED
+- StreamingPeakDetector state machine (belowGate → rising → falling)
+- Gate threshold computation per sample
+- Refractory period tracking
+- `useTemplateValidation` toggle for energy-only mode
+
+## Phase 3: ✅ COMPLETED
 
 ### What was implemented:
-- **StreamingPinchDetector.swift**: Core streaming DSP pipeline
-  - Single-sample processing API: `process(frame: SensorFrame) -> PinchEvent?`
-  - Causal filtering (no zero-phase delay for real-time)
-  - TKEO operators with 3-sample sliding buffers
-  - L2 sensor fusion (accelerometer + gyroscope)
-  - Reuses O(1) StreamingBaselineMad from Issue #27
 
-- **Phase1ValidationView**: Test interface in CompanionContentView.swift
-  - Validates streaming pipeline produces reasonable outputs
-  - Copy button for full test results
-  - Tests on real sensor data from Watch sessions
+**Template Matching Improvements:**
+- Pre-expanded templates with time-warp grid `[0.95, 1.0, 1.05]` at init
+- ±1 sample shift tolerance for alignment flexibility
+- vDSP-accelerated NCC computation for Watch performance
+- Early exit optimization when NCC >= 0.95
 
-### Key architectural decisions:
-- **Causal filtering only**: Eliminates `bandpassZeroPhase` (uses future data)
-- **Component-based design**: Small stateful helpers for each pipeline stage
-- **Fixed-size buffers**: Circular buffers for Watch memory constraints
-- **Streaming state machines**: Replace batch array operations
+**Quality Gates (matching batch implementation):**
+- **Amplitude surplus guard**: Peak must exceed gate by `amplitudeSurplusThresh * σ`
+- **ISI threshold guard**: Reject events < `isiThresholdMs` apart (unless NCC >= 0.90)
+- **Streaming gyro veto**: Run-length counter requires stable motion (`gyroHoldSamples`)
+- **Blended confidence**: 60% NCC + 40% amplitude surplus score
 
-### Validation results:
-✅ Fused signal range: [0.000 - 0.625]
-✅ Baseline range: [0.002 - 0.018]
-✅ Sigma range: [0.000 - 0.016]
-✅ Processing: <1ms per sample (much faster than batch)
+**Template Recording:**
+- `TemplateRecorder` class for capturing new pinch patterns
+- Buffers fused signal history during recording sessions
+- Extracts normalized template windows around detected peaks
+- Exports templates as JSON for persistence
 
-## IMMEDIATE NEXT STEP: Phase 2 Implementation
+### Key Files:
+- `DhikrCounter/StreamingPinchDetector.swift`: Complete streaming implementation (~1079 lines)
+  - `StreamingPinchDetector`: Main detector class
+  - `CausalBandpassFilter`: Causal IIR filter wrapper
+  - `TKEOOperator`: 3-sample streaming TKEO
+  - `StreamingBaselineMad`: Median/MAD baseline estimator
+  - `StreamingPeakDetector`: State machine for peak detection
+  - `StreamingTemplateMatcher`: Template matching with time-warp and shift tolerance
+  - `CircularBuffer`: Generic circular buffer for signal history
+  - `TemplateRecorder`: Records new templates from detected events
 
-### Phase 2: Peak Detection State Machine (Week 1-2)
+### Commits in this phase:
+1. `96d480a` - Optimize NCC computation with vDSP for Watch performance
+2. `33252a1` - Implement Phase 3 quality gates for streaming pinch detection
+3. `1c3f722` - Add TemplateRecorder for capturing new pinch patterns
 
-**Goal**: Replace batch peak detection with streaming state machine
+## IMMEDIATE NEXT STEPS: Phase 4 - Watch Deployment
 
-**Key components to implement:**
+### Phase 4: Watch Integration
 
-1. **StreamingPeakDetector state machine**:
+**Goal**: Deploy StreamingPinchDetector to Watch target with haptic feedback
+
+**Key tasks:**
+
+1. **Copy StreamingPinchDetector.swift to Watch target**
+   - File needs to be added to "DhikrCounter Watch App" target in Xcode
+
+2. **Update DhikrDetectionEngine for streaming mode**
+   - Replace batch processing with StreamingPinchDetector
+   - Add `useTemplateValidation` toggle option
+   - Connect to CMMotionManager at 50Hz
+
+3. **Add haptic feedback**
    ```swift
-   enum PeakState { case belowGate, rising, falling }
+   WKInterfaceDevice.current().play(.click)
    ```
-   - Gate threshold computation per sample
-   - State transitions: belowGate → rising → falling → belowGate
-   - Refractory period tracking (150-200ms)
 
-2. **Integration into StreamingPinchDetector**:
-   - Add `StreamingPeakDetector` instance
-   - Process fused signal through peak detector
-   - Return peak candidates with timestamps
+4. **Thread safety**
+   - Dedicated serial DispatchQueue for sensor processing
+   - Main thread for haptic feedback
 
-3. **Gyro veto mechanism**:
-   - Replace array-based logic (lines 693-697 in PinchDetector.swift)
-   - Implement as run-length counter for streaming
+5. **Template management**
+   - Load templates from shared container or bundle
+   - Optional: Use TemplateRecorder to capture Watch-specific patterns
 
-**Files to modify:**
-- `DhikrCounter/StreamingPinchDetector.swift`: Add peak detection
-- `DhikrCounter/CompanionContentView.swift`: Update validation to test peaks
+### Validation Priorities:
 
-**Validation criteria:**
-- Peak timing matches batch version (±phase delay from causal filtering)
-- Refractory period correctly enforced
-- Gate threshold computation matches batch algorithm
+1. **Streaming vs Batch Parity**
+   - Run both detectors on same recorded session data
+   - Target: >90% detection agreement
+   - Document any timing differences due to causal filtering
 
-### Phase 2 Implementation Steps:
+2. **On-device Performance**
+   - Processing time <0.5ms per sample at 50Hz
+   - Battery impact <5% additional drain
+   - Memory footprint <10MB
 
-1. **Add StreamingPeakDetector class** to StreamingPinchDetector.swift
-2. **Implement state machine logic** with proper transitions
-3. **Add refractory period tracking** (time-based, not sample-based)
-4. **Integrate with main process() method**
-5. **Update Phase1ValidationView** to show peak detection results
-6. **Test and validate** peak timing vs batch implementation
+3. **Real-world Testing**
+   - Test with various pinch patterns
+   - Verify haptic feedback latency <200ms
+   - Check false positive rate during normal wrist motion
 
-### Key Code References (from existing PinchDetector.swift):
-- Gate threshold logic: Look at how `gateThreshold` is computed
-- Peak detection algorithm: Lines 513-532 (batch version to convert)
-- Refractory period: How it's currently implemented in batch
-- Gyro veto: Lines 693-697 (array logic to convert to streaming)
+## Architecture Summary
 
-### Success Criteria for Phase 2:
-- Streaming detector finds peaks in real-time
-- Peak timing within ±20ms of batch version (accounting for causal delay)
-- Refractory period prevents false triggers
-- Processing remains <0.5ms per sample
-
-## Current Environment:
-- **Xcode**: Building successfully for iPhone 16 Pro simulator
-- **App**: Installed and running with Phase 1 validation interface
-- **Git**: Clean working tree, ready for Phase 2 branch
+```
+SensorFrame (50Hz from CMMotionManager)
+    │
+    ▼
+┌─────────────────────────────────────┐
+│     StreamingPinchDetector          │
+│  ┌─────────────────────────────┐   │
+│  │ Phase 1: DSP Pipeline        │   │
+│  │ filter → TKEO → L2 → σ/μ    │   │
+│  └─────────────────────────────┘   │
+│              │                      │
+│              ▼                      │
+│  ┌─────────────────────────────┐   │
+│  │ Phase 2: Peak Detection      │   │
+│  │ state machine + refractory   │   │
+│  └─────────────────────────────┘   │
+│              │                      │
+│              ▼                      │
+│  ┌─────────────────────────────┐   │
+│  │ Phase 3: Quality Gates       │   │
+│  │ • Gyro veto (run-length)    │   │
+│  │ • Amplitude surplus guard   │   │
+│  │ • ISI threshold guard       │   │
+│  │ • Template matching (NCC)   │   │
+│  └─────────────────────────────┘   │
+└─────────────────────────────────────┘
+    │
+    ▼
+PinchEvent? → Haptic feedback on Watch
+```
 
 ## Notes for Resume:
-- Phase 1 validation interface is working - use it to test Phase 2
-- The streaming DSP core is solid, focus on peak detection state machine
-- Consider causal delay (~10-20ms) when comparing peak timing
-- Template matching (Phase 3) comes after peak detection works
+- All Phase 3 quality gates implemented and tested (build succeeds)
+- TemplateRecorder ready for capturing new patterns
+- Focus next session on Watch deployment (Phase 4)
+- Consider running parity validation before deploying to Watch
