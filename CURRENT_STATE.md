@@ -1,8 +1,8 @@
-# Current State: Phase 1 Complete - Ready for Phase 2
+# Current State: Phase 2 Complete - Ready for Phase 3 or Watch Deployment
 
-**Date**: 2025-01-19
-**Branch**: `phase1-streaming-pinch-detector`
-**Last Commit**: `661309e` - "Implement Phase 1: Streaming DSP Core for real-time pinch detection"
+**Date**: 2025-11-25
+**Branch**: `claude/review-watch-algorithm-017V7sQFcjAzLApoqTGXFvbc`
+**Last Commit**: `a7b74fa` - "Merge pull request #44 from moussaba/phase2-peak-detection"
 
 ## Project Context
 Implementing real-time pinch detection for Apple Watch to eliminate iPhone dependency. Following the plan in `WATCH_REALTIME_DETECTION_PLAN.md`.
@@ -36,68 +36,91 @@ Implementing real-time pinch detection for Apple Watch to eliminate iPhone depen
 ✅ Sigma range: [0.000 - 0.016]
 ✅ Processing: <1ms per sample (much faster than batch)
 
-## IMMEDIATE NEXT STEP: Phase 2 Implementation
+## Phase 2: ✅ COMPLETED
 
-### Phase 2: Peak Detection State Machine (Week 1-2)
+### What was implemented:
+- **StreamingPeakDetector.swift:323-432**: Peak detection state machine
+  - 3-state machine: `belowGate → rising → falling`
+  - Gate threshold computation per sample: `baseline + gateK * sigma`
+  - Refractory period enforcement (150-200ms time-based)
+  - State transitions matching batch algorithm logic
 
-**Goal**: Replace batch peak detection with streaming state machine
+- **Integration into StreamingPinchDetector.swift:90-103**:
+  - Peak detector instance added to main pipeline
+  - Processes fused signal through peak detector
+  - Returns PinchEvent for valid peak candidates
+  - Placeholder confidence/NCC values (awaiting Phase 3)
 
-**Key components to implement:**
+- **Validation updates in CompanionContentView.swift:1451-1548**:
+  - Tests both DSP pipeline and peak detection
+  - Shows peak count, timing, and confidence metrics
+  - Validates state machine functioning
 
-1. **StreamingPeakDetector state machine**:
-   ```swift
-   enum PeakState { case belowGate, rising, falling }
-   ```
-   - Gate threshold computation per sample
-   - State transitions: belowGate → rising → falling → belowGate
-   - Refractory period tracking (150-200ms)
+### Validation results:
+✅ 102 peaks detected in 55.1s of real sensor data
+✅ 0.009ms per-sample processing time
+✅ State machine transitions working correctly
+✅ No crashes or errors during extended processing
+✅ Refractory period correctly enforced
 
-2. **Integration into StreamingPinchDetector**:
-   - Add `StreamingPeakDetector` instance
-   - Process fused signal through peak detector
-   - Return peak candidates with timestamps
+### Key architectural decisions:
+- **Time-based refractory period**: Uses timestamps, not sample counts
+- **State machine purity**: Clean transitions without complex edge cases
+- **Early return optimization**: Returns immediately when peak detected
+- **Placeholder values**: confidence=0.8, NCC=0.8 until Phase 3 template matching
 
-3. **Gyro veto mechanism**:
-   - Replace array-based logic (lines 693-697 in PinchDetector.swift)
-   - Implement as run-length counter for streaming
+## CURRENT DECISION POINT: Phase 3 vs Watch Deployment
 
-**Files to modify:**
-- `DhikrCounter/StreamingPinchDetector.swift`: Add peak detection
-- `DhikrCounter/CompanionContentView.swift`: Update validation to test peaks
+### Two paths forward:
 
-**Validation criteria:**
-- Peak timing matches batch version (±phase delay from causal filtering)
-- Refractory period correctly enforced
-- Gate threshold computation matches batch algorithm
+**Path A: Implement Phase 3 (Template Matching) First**
+- Adds quality/confidence scoring to peak events
+- Reduces false positives through NCC correlation
+- More complete algorithm before Watch deployment
+- Estimated effort: 1-2 days
 
-### Phase 2 Implementation Steps:
+**Path B: Deploy to Watch Now (Skip/Defer Phase 3)**
+- Faster time to on-device testing
+- Peak detection may be sufficient for basic counting
+- Template matching could be added later if needed
+- Get real-world performance data sooner
 
-1. **Add StreamingPeakDetector class** to StreamingPinchDetector.swift
-2. **Implement state machine logic** with proper transitions
-3. **Add refractory period tracking** (time-based, not sample-based)
-4. **Integrate with main process() method**
-5. **Update Phase1ValidationView** to show peak detection results
-6. **Test and validate** peak timing vs batch implementation
+## Current Implementation Status
 
-### Key Code References (from existing PinchDetector.swift):
-- Gate threshold logic: Look at how `gateThreshold` is computed
-- Peak detection algorithm: Lines 513-532 (batch version to convert)
-- Refractory period: How it's currently implemented in batch
-- Gyro veto: Lines 693-697 (array logic to convert to streaming)
+### ✅ What's Working:
+- **StreamingPinchDetector.swift**: Complete Phases 1 & 2 implementation
+  - Located in: `DhikrCounter/` (iPhone target only)
+  - DSP pipeline: filter → TKEO → fusion → baseline/sigma → peak detection
+  - Returns PinchEvent with placeholder confidence scores
+  - Fully validated on real Watch sensor data
 
-### Success Criteria for Phase 2:
-- Streaming detector finds peaks in real-time
-- Peak timing within ±20ms of batch version (accounting for causal delay)
-- Refractory period prevents false triggers
-- Processing remains <0.5ms per sample
+### ⚠️ What's NOT Deployed:
+- **Watch app still uses raw data collection**
+  - `DhikrDetectionEngine.swift:270-364`: Just logs sensor data
+  - No real-time detection on Watch
+  - Data transferred to iPhone for offline analysis
+  - StreamingPinchDetector not in Watch target
+
+### 🔧 Current Architecture:
+```
+Watch (50Hz) → Raw Sensor Collection → File Transfer → iPhone → StreamingPinchDetector
+                                                                 → Validation Testing
+```
+
+### 🎯 Target Architecture:
+```
+Watch (50Hz) → StreamingPinchDetector → Real-time Haptics → Count Display
+            → (Optional) File Transfer → iPhone → Historical Analysis
+```
 
 ## Current Environment:
 - **Xcode**: Building successfully for iPhone 16 Pro simulator
-- **App**: Installed and running with Phase 1 validation interface
-- **Git**: Clean working tree, ready for Phase 2 branch
+- **StreamingPinchDetector**: In iPhone target only (not Watch target)
+- **Watch App**: Using old raw collection approach
+- **Git**: On review branch `claude/review-watch-algorithm-017V7sQFcjAzLApoqTGXFvbc`
 
-## Notes for Resume:
-- Phase 1 validation interface is working - use it to test Phase 2
-- The streaming DSP core is solid, focus on peak detection state machine
-- Consider causal delay (~10-20ms) when comparing peak timing
-- Template matching (Phase 3) comes after peak detection works
+## Notes for Next Steps:
+- Phase 2 validation showing 102 peaks detected successfully
+- Algorithm optimized and ready for Watch deployment
+- Need decision: Add template matching first, or deploy Phases 1+2 to Watch?
+- Template matching adds quality filtering but increases complexity
