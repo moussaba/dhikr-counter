@@ -28,7 +28,6 @@ public final class StreamingPinchDetector {
     private var templateMatcher: StreamingTemplateMatcher
 
     // State tracking
-    private var isInitialized: Bool = false
     private var lastEventTime: Double = 0  // For ISI threshold tracking
 
     // Gyro veto state (run-length counter)
@@ -216,7 +215,6 @@ public final class StreamingPinchDetector {
         baselineEstimator = StreamingBaselineMad(winSec: config.madWinSec, fs: config.fs)
         peakDetector.reset()
         templateMatcher.reset()
-        isInitialized = false
         lastEventTime = 0
         gyroQuietRunLength = 0
     }
@@ -491,10 +489,10 @@ private final class StreamingPeakDetector {
             // Check if we should confirm this as a valid peak
 
             // Must still be above gate at peak location (batch: z[j] > gate[j])
-            // and respect refractory period
-            if peakValue > gate && (timestamp - lastPeakTime) >= refractoryTimeSec {
+            // and respect refractory period (use peakTimestamp for accurate timing, matching batch)
+            if peakValue > gate && (peakTimestamp - lastPeakTime) >= refractoryTimeSec {
                 // Valid peak detected!
-                lastPeakTime = timestamp
+                lastPeakTime = peakTimestamp  // Use peak timestamp, not current sample
                 state = .belowGate  // Reset state for next peak
 
                 return PeakCandidate(timestamp: peakTimestamp, value: peakValue)
@@ -558,14 +556,28 @@ private final class StreamingTemplateMatcher {
     private var timestampBuffer: CircularBuffer<Double>
     private let bufferSize: Int
 
+    // Pre-allocated scratch buffers to avoid allocations in hot path
+    private var signalScratch: [Float]
+    private var timestampScratch: [Double]
+    private var nccWindowScratch: [Float]
+    private var nccTemplateScratch: [Float]
+
     init(templates: [PinchTemplate], config: PinchConfig) {
         self.originalTemplates = templates
         self.config = config
-        self.nccThreshold = config.nccThresh
+        // Match batch implementation: clamp NCC threshold to minimum 0.65 for precision
+        self.nccThreshold = max(config.nccThresh, 0.65)
 
         // Calculate target length L for all templates
         let L = templates.first?.vectorLength ?? 16
         self.targetLength = L
+
+        // Validate all templates have consistent vectorLength
+        #if DEBUG
+        for (i, t) in templates.enumerated() where t.vectorLength != L {
+            assertionFailure("Template[\(i)] length \(t.vectorLength) != expected \(L)")
+        }
+        #endif
 
         // Pre-expand templates with time-warp grid
         // This creates templates.count * warpGrid.count expanded templates
@@ -588,6 +600,12 @@ private final class StreamingTemplateMatcher {
 
         self.signalBuffer = CircularBuffer<Float>(capacity: bufferSize)
         self.timestampBuffer = CircularBuffer<Double>(capacity: bufferSize)
+
+        // Pre-allocate scratch buffers to avoid allocations in hot path
+        self.signalScratch = [Float](repeating: 0, count: bufferSize)
+        self.timestampScratch = [Double](repeating: 0, count: bufferSize)
+        self.nccWindowScratch = [Float](repeating: 0, count: L)
+        self.nccTemplateScratch = [Float](repeating: 0, count: L)
     }
 
     // MARK: - Static Resampling (used during init)
@@ -643,9 +661,17 @@ private final class StreamingTemplateMatcher {
             return nil
         }
 
-        // Find the index closest to peak timestamp in our buffer
-        let timestamps = timestampBuffer.toArray()
-        let signals = signalBuffer.toArray()
+        // Copy buffer contents to pre-allocated scratch arrays (avoids allocation)
+        let signalCount = signalBuffer.copyTo(&signalScratch)
+        let timestampCount = timestampBuffer.copyTo(&timestampScratch)
+
+        guard signalCount >= targetLength else {
+            return nil
+        }
+
+        // Create array slices for the actual data (no allocation, just views)
+        let signals = Array(signalScratch[0..<signalCount])
+        let timestamps = Array(timestampScratch[0..<timestampCount])
 
         guard let peakIndex = findClosestIndex(to: peakTimestamp, in: timestamps) else {
             return nil
@@ -680,7 +706,7 @@ private final class StreamingTemplateMatcher {
             // Try shifts by shifting the template (pad with edges)
             for shift in -maxShift...maxShift {
                 let shiftedTemplate = shiftArray(expandedTemplate, by: shift)
-                let score = computeNCC(window: window, template: shiftedTemplate)
+                let score = computeNCC(window: window, template: shiftedTemplate, windowScratch: &nccWindowScratch, templateScratch: &nccTemplateScratch)
 
                 if score > bestNCC {
                     bestNCC = score
@@ -774,8 +800,10 @@ private final class StreamingTemplateMatcher {
         return Array(window.prefix(targetLength))
     }
 
-    private func computeNCC(window: [Float], template: [Float]) -> Float {
+    /// Compute NCC using pre-allocated scratch buffers to avoid allocations in hot path
+    private func computeNCC(window: [Float], template: [Float], windowScratch: inout [Float], templateScratch: inout [Float]) -> Float {
         guard window.count == template.count else { return 0.0 }
+        guard window.count <= windowScratch.count, template.count <= templateScratch.count else { return 0.0 }
 
         let count = vDSP_Length(window.count)
         guard count > 0 else { return 0.0 }
@@ -786,24 +814,21 @@ private final class StreamingTemplateMatcher {
         vDSP_meanv(window, 1, &windowMean, count)
         vDSP_meanv(template, 1, &templateMean, count)
 
-        // Center the signals (subtract mean) using vDSP
-        var windowCentered = Array<Float>(repeating: 0, count: window.count)
-        var templateCentered = Array<Float>(repeating: 0, count: template.count)
-
+        // Center the signals (subtract mean) using vDSP - write to scratch buffers
         var negativeWindowMean = -windowMean
         var negativeTemplateMean = -templateMean
-        vDSP_vsadd(window, 1, &negativeWindowMean, &windowCentered, 1, count)
-        vDSP_vsadd(template, 1, &negativeTemplateMean, &templateCentered, 1, count)
+        vDSP_vsadd(window, 1, &negativeWindowMean, &windowScratch, 1, count)
+        vDSP_vsadd(template, 1, &negativeTemplateMean, &templateScratch, 1, count)
 
         // Compute dot product for numerator using vDSP
         var numerator: Float = 0
-        vDSP_dotpr(windowCentered, 1, templateCentered, 1, &numerator, count)
+        vDSP_dotpr(windowScratch, 1, templateScratch, 1, &numerator, count)
 
         // Compute sum of squares for denominator using vDSP
         var windowSumSq: Float = 0
         var templateSumSq: Float = 0
-        vDSP_svesq(windowCentered, 1, &windowSumSq, count)
-        vDSP_svesq(templateCentered, 1, &templateSumSq, count)
+        vDSP_svesq(windowScratch, 1, &windowSumSq, count)
+        vDSP_svesq(templateScratch, 1, &templateSumSq, count)
 
         let denominator = sqrt(windowSumSq * templateSumSq)
         guard denominator > 1e-6 else { return 0.0 }
@@ -841,11 +866,30 @@ private struct CircularBuffer<T> {
         }
     }
 
-    mutating func removeAll() {
+    mutating func removeAll(keepingCapacity: Bool = true) {
         head = 0
         tail = 0
         _count = 0
-        buffer = Array(repeating: nil, count: capacity)
+        if !keepingCapacity {
+            buffer = Array(repeating: nil, count: capacity)
+        }
+        // Note: keeping capacity means we don't nil out elements,
+        // but head/tail/count ensure they won't be read
+    }
+
+    /// Copy buffer contents to pre-allocated array (avoids allocation in hot path)
+    /// Returns the number of elements copied
+    func copyTo(_ output: inout [T]) -> Int {
+        guard _count > 0 else { return 0 }
+
+        let copyCount = min(_count, output.count)
+        for i in 0..<copyCount {
+            let index = (head + i) % capacity
+            if let element = buffer[index] {
+                output[i] = element
+            }
+        }
+        return copyCount
     }
 
     func toArray() -> [T] {
