@@ -39,6 +39,8 @@
 		F531EB5F2E6E778900CCD0B6 /* TKEOAnalysisExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F531EB572E6E778900CCD0B6 /* TKEOAnalysisExporter.swift */; };
 		F531EB612E6E8B3E00CCD0B6 /* TKEOChartImageExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F531EB602E6E8B3E00CCD0B6 /* TKEOChartImageExporter.swift */; };
 		F575EFA62E7DA258006F82C7 /* StreamingPinchDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = F575EFA42E7DA258006F82C7 /* StreamingPinchDetector.swift */; };
+		F575EFA72E86A100006F82C7 /* StreamingPinchDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = F575EFA52E86A100006F82C7 /* StreamingPinchDetector.swift */; };
+		F575EFA92E86A100006F82C7 /* PinchTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = F575EFA82E86A100006F82C7 /* PinchTypes.swift */; };
 		F5991E902E66F499006885C5 /* DhikrCounter Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 31683209E7C5139A132FBBC6 /* DhikrCounter Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		FAAC33ABD9E9A7C22A589960 /* WatchKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B42F69224B2415F36C1294F4 /* WatchKit.framework */; };
 /* End PBXBuildFile section */
@@ -123,6 +125,8 @@
 		F531EB5A2E6E778900CCD0B6 /* TKEOHTMLReportGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TKEOHTMLReportGenerator.swift; sourceTree = "<group>"; };
 		F531EB602E6E8B3E00CCD0B6 /* TKEOChartImageExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TKEOChartImageExporter.swift; sourceTree = "<group>"; };
 		F575EFA42E7DA258006F82C7 /* StreamingPinchDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingPinchDetector.swift; sourceTree = "<group>"; };
+		F575EFA52E86A100006F82C7 /* StreamingPinchDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingPinchDetector.swift; sourceTree = "<group>"; };
+		F575EFA82E86A100006F82C7 /* PinchTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinchTypes.swift; sourceTree = "<group>"; };
 		F657C64E8290259D316B999E /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
 		FEDA213EFCDD446253B7B013 /* DataVisualizationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataVisualizationView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -190,6 +194,7 @@
 			children = (
 				BC78D9438E3F6B8D4933619A /* DetectionEvent.swift */,
 				7AFDA871D0700BE67FFE7D7D /* DhikrSession.swift */,
+				F575EFA82E86A100006F82C7 /* PinchTypes.swift */,
 				A216365DDD7AF6383A11141E /* SensorReading.swift */,
 			);
 			path = Shared;
@@ -207,6 +212,7 @@
 				95B8AC259A575FF2DA04BC25 /* Info.plist */,
 				01E63FC198631DA60983C514 /* MilestoneView.swift */,
 				B3FCAF1BF6DC6DFB148D3241 /* SessionView.swift */,
+				F575EFA52E86A100006F82C7 /* StreamingPinchDetector.swift */,
 			);
 			path = "DhikrCounter Watch App";
 			sourceTree = "<group>";
@@ -364,8 +370,10 @@
 				F505F6572E66C792003714BE /* WatchSessionManager.swift in Sources */,
 				43DCBBF8A1AB8FCDB652E389 /* DhikrSession.swift in Sources */,
 				2035D7153706B6A4E0B6A76A /* MilestoneView.swift in Sources */,
+				F575EFA92E86A100006F82C7 /* PinchTypes.swift in Sources */,
 				692B0EA91BAB925090D459F0 /* SensorReading.swift in Sources */,
 				C01845AD9A84B3EABC33FB02 /* SessionView.swift in Sources */,
+				F575EFA72E86A100006F82C7 /* StreamingPinchDetector.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

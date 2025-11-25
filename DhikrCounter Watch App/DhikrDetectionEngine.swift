@@ -82,9 +82,14 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
     private var workoutSession: HKWorkoutSession?
     // WKExtendedRuntimeSession removed - using HKWorkoutSession only
     
-    // WatchConnectivity integration  
+    // WatchConnectivity integration
     private let sessionManager = WatchSessionManager.shared
-    
+
+    // MARK: - Streaming Pinch Detection (Phase 4)
+    private var streamingDetector: StreamingPinchDetector?
+    private var useStreamingDetection: Bool = true  // Toggle for streaming vs raw-only mode
+    private var useTemplateValidation: Bool = true  // Toggle for template matching vs energy-only
+
     override init() {
         super.init()
         // WCSession is automatically initialized by singleton
@@ -173,7 +178,7 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
         }
         
         print("🟢 Starting sensor data collection at \(samplingRate) Hz")
-        
+
         sessionState = .setup
         sessionStartTime = Date()
         sessionDuration = 0.0
@@ -181,9 +186,14 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
         pinchCount = 0
         currentMilestone = 0
         currentSessionId = UUID()
-        
+
         // Clear previous session data
         clearLogs()
+
+        // Initialize streaming pinch detector (Phase 4)
+        if useStreamingDetection {
+            initializeStreamingDetector()
+        }
         
         // Start session timer
         startSessionTimer()
@@ -359,8 +369,29 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
                 print("🟢 Session active - collecting sensor data")
             }
         }
-        
-        // No pinch detection - just collect raw sensor data
+
+        // MARK: - Streaming Pinch Detection (Phase 4)
+        // Process frame through streaming detector if enabled
+        if useStreamingDetection, let detector = streamingDetector {
+            // Create SensorFrame from CMDeviceMotion
+            let frame = SensorFrame(
+                t: motionTimestamp,
+                ax: Float(userAccelX),
+                ay: Float(userAccelY),
+                az: Float(userAccelZ),
+                gx: Float(rotationX),
+                gy: Float(rotationY),
+                gz: Float(rotationZ)
+            )
+
+            // Process and detect pinch
+            if let event = detector.process(frame: frame) {
+                // Dispatch to main thread for UI update and haptic feedback
+                DispatchQueue.main.async { [weak self] in
+                    self?.registerStreamingPinch(event: event, timestamp: currentTime)
+                }
+            }
+        }
     }
     
     private func updateBuffers(acceleration: Double, gyroscope: Double, time: Date) {
@@ -547,7 +578,68 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
             WKInterfaceDevice.current().play(.click)
         }
     }
-    
+
+    // MARK: - Streaming Pinch Detection (Phase 4)
+
+    /// Initialize the streaming pinch detector with default config and template
+    private func initializeStreamingDetector() {
+        print("🎯 Initializing streaming pinch detector...")
+
+        // Use Watch-optimized configuration
+        let config = PinchConfig.watchDefaults()
+
+        // Create default Gaussian template
+        let defaultTemplate = PinchTemplate.createDefault(fs: config.fs, preMs: config.windowPreMs, postMs: config.windowPostMs)
+
+        // Initialize detector
+        streamingDetector = StreamingPinchDetector(
+            config: config,
+            templates: [defaultTemplate],
+            useTemplateValidation: useTemplateValidation
+        )
+
+        print("✅ Streaming detector initialized (templateValidation: \(useTemplateValidation))")
+    }
+
+    /// Handle detected pinch event from streaming detector
+    private func registerStreamingPinch(event: PinchEvent, timestamp: Date) {
+        pinchCount += 1
+        lastDetectionTime = timestamp
+
+        // Check for milestones
+        let newMilestone = calculateMilestone(count: pinchCount)
+        let milestoneReached = newMilestone > currentMilestone
+        currentMilestone = newMilestone
+
+        // Provide appropriate haptic feedback
+        if milestoneReached {
+            provideMilestoneHaptic(milestone: newMilestone)
+        } else {
+            WKInterfaceDevice.current().play(.click)
+        }
+
+        // Log detection event (reuse existing format for compatibility)
+        logDetectionEvent(
+            score: Double(event.confidence),
+            accel: Double(event.gateScore),
+            gyro: Double(event.ncc),
+            time: timestamp,
+            manual: false
+        )
+
+        print("🎯 Streaming pinch detected! Count: \(pinchCount), Confidence: \(String(format: "%.2f", event.confidence)), NCC: \(String(format: "%.2f", event.ncc))")
+    }
+
+    /// Reset streaming detector state
+    private func resetStreamingDetector() {
+        streamingDetector?.reset()
+    }
+
+    /// Get streaming detector statistics for debugging
+    public func getStreamingDetectorStats() -> StreamingDetectorStats? {
+        return streamingDetector?.stats
+    }
+
     private func variance(_ values: [Double]) -> Double {
         guard values.count > 1 else { return 0 }
         let mean = values.reduce(0, +) / Double(values.count)
@@ -721,16 +813,19 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
         detectionEventLog.removeAll(keepingCapacity: false)
         motionInterruptionLog.removeAll(keepingCapacity: false)
         sampleCount = 0  // Reset thread-safe sample counter
-        
+
         // Reset interruption tracking
         motionInterruptionStartTime = nil
         lastMotionUpdateTime = Date()
-        
+
         // Also clear buffers to free memory
         accelerationBuffer.removeAll(keepingCapacity: false)
         gyroscopeBuffer.removeAll(keepingCapacity: false)
         scoreBuffer.removeAll(keepingCapacity: false)
         timeBuffer.removeAll(keepingCapacity: false)
+
+        // Reset streaming detector state (Phase 4)
+        resetStreamingDetector()
     }
     
     // Computed properties for UI
