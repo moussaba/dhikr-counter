@@ -2127,40 +2127,60 @@ extension TKEODetectionCard {
             }
             
             let processingTime = CFAbsoluteTimeGetCurrent() - startTime
-            
+            let detectorStats = detector.stats
+
             await MainActor.run {
                 self.addDebugLog("=== ANALYSIS COMPLETE ===")
                 self.addDebugLog("✅ Processing time: \(String(format: "%.1f", processingTime * 1000))ms")
-                
+
+                // Add detector statistics
+                self.addDebugLog("--- Quality Gate Statistics ---")
+                self.addDebugLog("📊 Frames processed: \(detectorStats.totalFrames)")
+                self.addDebugLog("🔍 Peak candidates: \(detectorStats.peakCandidates)")
+                self.addDebugLog("--- Rejections ---")
+                self.addDebugLog("🚫 Gyro veto: \(detectorStats.gyroVetoRejections)")
+                self.addDebugLog("🚫 Amplitude surplus: \(detectorStats.amplitudeSurplusRejections)")
+                self.addDebugLog("🚫 ISI threshold: \(detectorStats.isiRejections)")
+                self.addDebugLog("🚫 Template match: \(detectorStats.templateMatchFailures)")
+                self.addDebugLog("--- Signal Stats ---")
+                self.addDebugLog("📈 Max fused signal: \(String(format: "%.4f", detectorStats.maxFusedSignal))")
+                self.addDebugLog("📈 Max gate threshold: \(String(format: "%.4f", detectorStats.maxGateThreshold))")
+                self.addDebugLog("📈 Avg sigma: \(String(format: "%.6f", detectorStats.avgSigma))")
+                if !detectorStats.nccScores.isEmpty {
+                    self.addDebugLog("📈 NCC scores: avg=\(String(format: "%.3f", detectorStats.avgNCC)), range=\(String(format: "%.3f", detectorStats.nccScores.min() ?? 0))-\(String(format: "%.3f", detectorStats.nccScores.max() ?? 0))")
+                }
+
                 if !events.isEmpty {
                     self.addDebugLog("🎉 SUCCESS: \(events.count) pinch events detected!")
                     self.detectionState.detectedPinchCount = events.count  // Update UI state
                     self.detectionState.detectedEvents = events  // Store events for plot visualization
-                    
+
                     // Show summary instead of every event
                     if events.count <= 5 {
                         // Show all events if 5 or fewer
                         for (index, event) in events.enumerated() {
-                            self.addDebugLog("   Event \(index + 1): t=\(String(format: "%.3f", event.tPeak))s, confidence=\(String(format: "%.3f", event.confidence))")
+                            self.addDebugLog("   Event \(index + 1): t=\(String(format: "%.3f", event.tPeak))s, conf=\(String(format: "%.3f", event.confidence)), ncc=\(String(format: "%.3f", event.ncc))")
                         }
                     } else {
                         // Show summary for many events
                         let avgConfidence = events.map { $0.confidence }.reduce(0, +) / Float(events.count)
                         let maxConfidence = events.map { $0.confidence }.max() ?? 0
                         let minConfidence = events.map { $0.confidence }.min() ?? 0
+                        let avgNCC = events.map { $0.ncc }.reduce(0, +) / Float(events.count)
                         let timeSpan = (events.last?.tPeak ?? 0) - (events.first?.tPeak ?? 0)
-                        
-                        self.addDebugLog("   📊 Events summary: avg=\(String(format: "%.3f", avgConfidence)), range=\(String(format: "%.3f", minConfidence))-\(String(format: "%.3f", maxConfidence))")
+
+                        self.addDebugLog("   📊 Confidence: avg=\(String(format: "%.3f", avgConfidence)), range=\(String(format: "%.3f", minConfidence))-\(String(format: "%.3f", maxConfidence))")
+                        self.addDebugLog("   📊 NCC: avg=\(String(format: "%.3f", avgNCC))")
                         self.addDebugLog("   ⏱️ Time span: \(String(format: "%.1f", timeSpan))s")
-                        self.addDebugLog("   🔍 First event: t=\(String(format: "%.3f", events.first?.tPeak ?? 0))s, conf=\(String(format: "%.3f", events.first?.confidence ?? 0))")
-                        self.addDebugLog("   🏁 Last event: t=\(String(format: "%.3f", events.last?.tPeak ?? 0))s, conf=\(String(format: "%.3f", events.last?.confidence ?? 0))")
+                        self.addDebugLog("   🔍 First event: t=\(String(format: "%.3f", events.first?.tPeak ?? 0))s")
+                        self.addDebugLog("   🏁 Last event: t=\(String(format: "%.3f", events.last?.tPeak ?? 0))s")
                     }
                 } else {
                     self.addDebugLog("❌ No pinch events detected")
                     self.addDebugLog("💡 Check motion data and settings")
                     self.detectionState.detectedPinchCount = 0  // Reset UI state
                 }
-                
+
                 self.detectionState.isRunningDetection = false
             }
         }

@@ -121,25 +121,34 @@ def find_simulator_documents_path():
     """Find the Documents directory for DhikrCounter app in the running simulator."""
     try:
         # Find running simulators
-        result = subprocess.run(['xcrun', 'simctl', 'list', 'devices'], 
+        result = subprocess.run(['xcrun', 'simctl', 'list', 'devices'],
                               capture_output=True, text=True, check=True)
-        
-        # Look for booted simulator
+
+        # Look for booted simulator and extract UDID
         for line in result.stdout.split('\n'):
             if 'Booted' in line and ('iPhone' in line or 'iPad' in line):
-                # Extract device name
+                # Extract device name and UDID
+                # Format: "    iPhone 16 Pro (D418250A-B1D9-4603-9714-7E295A9A4A9E) (Booted)"
                 device_name = line.split('(')[0].strip()
-                print(f"📱 Found running simulator: {device_name}")
-                
-                # Get app container path
+                # Extract UDID from between first set of parentheses
+                import re
+                udid_match = re.search(r'\(([0-9A-Fa-f-]{36})\)', line)
+                if not udid_match:
+                    print(f"⚠️  Could not extract UDID from: {line}")
+                    continue
+
+                device_udid = udid_match.group(1)
+                print(f"📱 Found running simulator: {device_name} (UDID: {device_udid})")
+
+                # Get app container path using UDID
                 container_result = subprocess.run([
-                    'xcrun', 'simctl', 'get_app_container', 
-                    device_name, 'com.fuutaworks.DhikrCounter', 'data'
+                    'xcrun', 'simctl', 'get_app_container',
+                    device_udid, 'com.fuutaworks.DhikrCounter', 'data'
                 ], capture_output=True, text=True, check=True)
-                
+
                 container_path = container_result.stdout.strip()
                 documents_path = os.path.join(container_path, 'Documents')
-                
+
                 if os.path.exists(documents_path):
                     print(f"📁 App Documents path: {documents_path}")
                     return documents_path
@@ -149,26 +158,57 @@ def find_simulator_documents_path():
                     os.makedirs(documents_path, exist_ok=True)
                     print(f"✅ Created Documents directory: {documents_path}")
                     return documents_path
-        
+
         print("❌ No running simulator found")
         return None
-        
+
     except subprocess.CalledProcessError as e:
         print(f"❌ Error finding simulator: {e}")
+        print(f"   stdout: {e.stdout}")
+        print(f"   stderr: {e.stderr}")
         return None
 
-def copy_to_simulator(output_file):
+def create_meta_file(ios_session, output_file):
+    """Create the .meta.json file alongside the session file."""
+    meta_file = output_file.replace('.json', '.meta.json')
+    meta_data = {
+        "sessionId": ios_session['sessionId'],
+        "startTime": ios_session['startTime'],
+        "endTime": ios_session['endTime'],
+        "sessionDuration": ios_session['sessionDuration'],
+        "sensorDataCount": len(ios_session['sensorData']),
+        "totalPinches": ios_session['totalPinches'],
+        "detectedPinches": ios_session['detectedPinches'],
+        "detectionEventCount": len(ios_session.get('detectionEvents', [])),
+        "manualCorrections": ios_session['manualCorrections'],
+        "notes": ios_session['notes']
+    }
+
+    with open(meta_file, 'w') as f:
+        json.dump(meta_data, f, indent=2)
+
+    print(f"📋 Created meta file: {meta_file}")
+    return meta_file
+
+def copy_to_simulator(output_file, meta_file=None):
     """Copy the converted session file to the running simulator's Documents directory."""
     simulator_docs = find_simulator_documents_path()
     if not simulator_docs:
         print("⚠️  Could not find simulator Documents directory")
         return False
-    
+
     try:
-        # Copy file to simulator
+        # Copy session file to simulator
         dest_path = os.path.join(simulator_docs, os.path.basename(output_file))
         shutil.copy2(output_file, dest_path)
         print(f"📲 Copied to simulator: {dest_path}")
+
+        # Copy meta file if provided
+        if meta_file and os.path.exists(meta_file):
+            meta_dest_path = os.path.join(simulator_docs, os.path.basename(meta_file))
+            shutil.copy2(meta_file, meta_dest_path)
+            print(f"📲 Copied meta to simulator: {meta_dest_path}")
+
         return True
     except Exception as e:
         print(f"❌ Error copying to simulator: {e}")
@@ -259,17 +299,20 @@ def main():
     # Write output
     with open(output_file, 'w') as f:
         json.dump(ios_session, f, indent=2)
-    
+
+    # Create meta file (required for iOS app to recognize the session)
+    meta_file = create_meta_file(ios_session, output_file)
+
     print(f"✅ Converted session to iOS format:")
     print(f"   Session ID: {ios_session['sessionId']}")
     print(f"   Duration: {ios_session['sessionDuration']}s")
     print(f"   Sensor readings: {len(ios_session['sensorData'])}")
     print(f"   Output file: {output_file}")
-    
+
     # Copy to simulator if requested
     if should_copy_to_simulator:
         print("\n🚀 Copying to iOS simulator...")
-        if copy_to_simulator(output_file):
+        if copy_to_simulator(output_file, meta_file):
             print("✅ Successfully copied to simulator!")
         else:
             print("❌ Failed to copy to simulator")

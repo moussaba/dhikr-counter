@@ -1,6 +1,60 @@
 import Foundation
 import Accelerate
 
+// MARK: - Debug Statistics for Streaming Detection
+
+/// Statistics for tracking quality gate behavior and rejections
+public struct StreamingDetectorStats {
+    public var totalFrames: Int = 0
+    public var peakCandidates: Int = 0
+    public var gyroVetoRejections: Int = 0
+    public var amplitudeSurplusRejections: Int = 0
+    public var isiRejections: Int = 0
+    public var templateMatchFailures: Int = 0
+    public var successfulEvents: Int = 0
+
+    // Peak signal/gate statistics
+    public var maxFusedSignal: Float = 0
+    public var maxGateThreshold: Float = 0
+    public var avgSigma: Float = 0
+    private var sigmaSum: Float = 0
+    private var sigmaCount: Int = 0
+
+    // NCC statistics
+    public var nccScores: [Float] = []
+    public var avgNCC: Float {
+        nccScores.isEmpty ? 0 : nccScores.reduce(0, +) / Float(nccScores.count)
+    }
+
+    mutating func updateSigma(_ sigma: Float) {
+        sigmaSum += sigma
+        sigmaCount += 1
+        avgSigma = sigmaSum / Float(sigmaCount)
+    }
+
+    public func summary() -> String {
+        var lines: [String] = []
+        lines.append("=== Streaming Detector Stats ===")
+        lines.append("Frames processed: \(totalFrames)")
+        lines.append("Peak candidates: \(peakCandidates)")
+        lines.append("Successful events: \(successfulEvents)")
+        lines.append("--- Rejections ---")
+        lines.append("Gyro veto: \(gyroVetoRejections)")
+        lines.append("Amplitude surplus: \(amplitudeSurplusRejections)")
+        lines.append("ISI threshold: \(isiRejections)")
+        lines.append("Template match: \(templateMatchFailures)")
+        lines.append("--- Signal Stats ---")
+        lines.append("Max fused signal: \(String(format: "%.4f", maxFusedSignal))")
+        lines.append("Max gate threshold: \(String(format: "%.4f", maxGateThreshold))")
+        lines.append("Avg sigma: \(String(format: "%.6f", avgSigma))")
+        if !nccScores.isEmpty {
+            lines.append("Avg NCC: \(String(format: "%.3f", avgNCC))")
+            lines.append("NCC range: \(String(format: "%.3f", nccScores.min() ?? 0))-\(String(format: "%.3f", nccScores.max() ?? 0))")
+        }
+        return lines.joined(separator: "\n")
+    }
+}
+
 /// Phase 1: Streaming DSP Core for real-time pinch detection
 /// Implements single-sample processing with causal filtering only
 public final class StreamingPinchDetector {
@@ -33,6 +87,9 @@ public final class StreamingPinchDetector {
     // Gyro veto state (run-length counter)
     private var gyroQuietRunLength: Int = 0  // Consecutive samples below threshold
     private let gyroHoldSamples: Int         // Required quiet run length
+
+    // Debug statistics (public for external access)
+    public private(set) var stats = StreamingDetectorStats()
 
     public init(config: PinchConfig, templates: [PinchTemplate], useTemplateValidation: Bool = true) {
         self.config = config
@@ -78,6 +135,9 @@ public final class StreamingPinchDetector {
     /// Process single sensor frame and return potential pinch event
     @discardableResult
     public func process(frame: SensorFrame) -> PinchEvent? {
+        // Track frame count
+        stats.totalFrames += 1
+
         // Phase 1: Build streaming pipeline: filter → TKEO → L2 fusion → baseline/sigma
 
         // 1. Apply causal bandpass filtering to each axis
@@ -104,6 +164,10 @@ public final class StreamingPinchDetector {
         // 4. Update baseline and sigma estimation
         let (baseline, sigma) = baselineEstimator.update(fusedSignal)
 
+        // Track signal stats
+        stats.maxFusedSignal = max(stats.maxFusedSignal, fusedSignal)
+        stats.updateSigma(sigma)
+
         // 5. Update gyro veto run-length counter (uses raw gyro magnitude)
         let gyroMag = sqrt(frame.gx*frame.gx + frame.gy*frame.gy + frame.gz*frame.gz)
         if gyroMag <= config.gyroVetoThresh {
@@ -118,15 +182,20 @@ public final class StreamingPinchDetector {
 
         // Phase 2: Peak detection with streaming state machine
         let gateThreshold = baseline + config.gateK * max(sigma, 1e-3)
+        stats.maxGateThreshold = max(stats.maxGateThreshold, gateThreshold)
 
         // Quality gate 0: Gyro veto - only process peaks when motion has been stable
         guard motionOK else {
-            // Still run peak detection to update state machine, but don't return events
-            _ = peakDetector.process(signal: fusedSignal, gate: gateThreshold, timestamp: frame.t)
+            // Still run peak detection to update state machine
+            if peakDetector.process(signal: fusedSignal, gate: gateThreshold, timestamp: frame.t) != nil {
+                stats.peakCandidates += 1
+                stats.gyroVetoRejections += 1
+            }
             return nil
         }
 
         if let peakCandidate = peakDetector.process(signal: fusedSignal, gate: gateThreshold, timestamp: frame.t) {
+            stats.peakCandidates += 1
 
             // Quality gate 1: Amplitude surplus guard
             // Require peak to exceed gate by configurable σ (amplitudeSurplusThresh)
@@ -134,6 +203,7 @@ public final class StreamingPinchDetector {
             let localSigma = max(1e-6, sigma)
             guard surplus >= config.amplitudeSurplusThresh * localSigma else {
                 // Peak rejected: insufficient amplitude surplus
+                stats.amplitudeSurplusRejections += 1
                 return nil
             }
 
@@ -145,10 +215,12 @@ public final class StreamingPinchDetector {
             if useTemplateValidation {
                 // Phase 3: Template matching for detected peak
                 if let templateMatch = templateMatcher.matchTemplate(around: peakCandidate.timestamp) {
+                    stats.nccScores.append(templateMatch.nccScore)
 
                     // ISI check with NCC exception: reject if too close unless NCC >= 0.90
                     if timeSinceLast < isiThresholdSec && templateMatch.nccScore < 0.90 {
                         // Peak rejected: ISI too short and NCC not high enough
+                        stats.isiRejections += 1
                         return nil
                     }
 
@@ -158,6 +230,7 @@ public final class StreamingPinchDetector {
 
                     // Update last event time
                     lastEventTime = peakCandidate.timestamp
+                    stats.successfulEvents += 1
 
                     return PinchEvent(
                         tPeak: peakCandidate.timestamp,
@@ -169,6 +242,7 @@ public final class StreamingPinchDetector {
                     )
                 } else {
                     // Peak detected but no good template match - reject
+                    stats.templateMatchFailures += 1
                     return nil
                 }
             } else {
@@ -176,11 +250,13 @@ public final class StreamingPinchDetector {
                 // ISI check without NCC exception
                 if timeSinceLast < isiThresholdSec {
                     // Peak rejected: ISI too short (no template to override)
+                    stats.isiRejections += 1
                     return nil
                 }
 
                 // Update last event time
                 lastEventTime = peakCandidate.timestamp
+                stats.successfulEvents += 1
 
                 return PinchEvent(
                     tPeak: peakCandidate.timestamp,
@@ -217,6 +293,7 @@ public final class StreamingPinchDetector {
         templateMatcher.reset()
         lastEventTime = 0
         gyroQuietRunLength = 0
+        stats = StreamingDetectorStats()
     }
 
     /// Get current fused signal value and baseline/sigma for debugging/validation
