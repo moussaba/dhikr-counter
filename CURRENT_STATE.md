@@ -1,8 +1,8 @@
-# Current State: Phase 3 Complete - Ready for Watch Deployment
+# Current State: Phase 4 - Watch Deployment
 
-**Date**: 2025-11-24
-**Branch**: `phase3-template-matching`
-**Last Commit**: `1c3f722` - "Add TemplateRecorder for capturing new pinch patterns"
+**Date**: 2025-11-25
+**Branch**: `phase4-watch-deployment`
+**Last Commit**: `62ae4ad` - "Add debug statistics tracking for streaming pinch detector"
 
 ## Project Context
 Implementing real-time pinch detection for Apple Watch to eliminate iPhone dependency. Following the plan in `WATCH_REALTIME_DETECTION_PLAN.md`.
@@ -22,124 +22,179 @@ Implementing real-time pinch detection for Apple Watch to eliminate iPhone depen
 - `useTemplateValidation` toggle for energy-only mode
 
 ## Phase 3: ✅ COMPLETED
+- Pre-expanded templates with time-warp grid
+- vDSP-accelerated NCC computation
+- Quality gates: amplitude surplus, ISI threshold, gyro veto
+- TemplateRecorder for capturing new patterns
+- Debug statistics tracking for validation
 
-### What was implemented:
+## Phase 4: 🔄 IN PROGRESS - Watch Deployment
 
-**Template Matching Improvements:**
-- Pre-expanded templates with time-warp grid `[0.95, 1.0, 1.05]` at init
-- ±1 sample shift tolerance for alignment flexibility
-- vDSP-accelerated NCC computation for Watch performance
-- Early exit optimization when NCC >= 0.95
+### Goal
+Deploy StreamingPinchDetector to Watch target with real-time haptic feedback for pinch detection.
 
-**Quality Gates (matching batch implementation):**
-- **Amplitude surplus guard**: Peak must exceed gate by `amplitudeSurplusThresh * σ`
-- **ISI threshold guard**: Reject events < `isiThresholdMs` apart (unless NCC >= 0.90)
-- **Streaming gyro veto**: Run-length counter requires stable motion (`gyroHoldSamples`)
-- **Blended confidence**: 60% NCC + 40% amplitude surplus score
+### Implementation Plan
 
-**Template Recording:**
-- `TemplateRecorder` class for capturing new pinch patterns
-- Buffers fused signal history during recording sessions
-- Extracts normalized template windows around detected peaks
-- Exports templates as JSON for persistence
+#### Step 1: Create Shared Types for Watch Target
+**Files to create**: `Shared/PinchTypes.swift`
 
-### Key Files:
-- `DhikrCounter/StreamingPinchDetector.swift`: Complete streaming implementation (~1079 lines)
-  - `StreamingPinchDetector`: Main detector class
-  - `CausalBandpassFilter`: Causal IIR filter wrapper
-  - `TKEOOperator`: 3-sample streaming TKEO
-  - `StreamingBaselineMad`: Median/MAD baseline estimator
-  - `StreamingPeakDetector`: State machine for peak detection
-  - `StreamingTemplateMatcher`: Template matching with time-warp and shift tolerance
-  - `CircularBuffer`: Generic circular buffer for signal history
-  - `TemplateRecorder`: Records new templates from detected events
+The Watch target needs access to shared types that are currently in `PinchDetector.swift`:
+- `SensorFrame` - Input sensor data structure
+- `PinchEvent` - Detection result structure
+- `PinchConfig` - Algorithm configuration
+- `PinchTemplate` - Template data for matching
 
-### Commits in this phase:
-1. `96d480a` - Optimize NCC computation with vDSP for Watch performance
-2. `33252a1` - Implement Phase 3 quality gates for streaming pinch detection
-3. `1c3f722` - Add TemplateRecorder for capturing new pinch patterns
+**Approach**: Create a shared Swift file that can be included in both iOS and watchOS targets.
 
-## IMMEDIATE NEXT STEPS: Phase 4 - Watch Deployment
+#### Step 2: Add StreamingPinchDetector to Watch Target
+**Files to add**:
+- `DhikrCounter Watch App/StreamingPinchDetector.swift` (copy from iOS)
 
-### Phase 4: Watch Integration
+**Key considerations**:
+- File already uses `import Accelerate` which is available on watchOS
+- No UIKit dependencies - pure computation
+- ~1200 lines, includes all streaming components:
+  - `StreamingDetectorStats` - Debug statistics
+  - `StreamingPinchDetector` - Main detector
+  - `CausalBandpassFilter` - IIR filtering
+  - `TKEOOperator` - Energy operator
+  - `StreamingBaselineMad` - O(1) baseline estimation
+  - `StreamingPeakDetector` - State machine
+  - `StreamingTemplateMatcher` - Template matching
+  - `CircularBuffer` - Signal history
+  - `TemplateRecorder` - Pattern capture
 
-**Goal**: Deploy StreamingPinchDetector to Watch target with haptic feedback
+#### Step 3: Update DhikrDetectionEngine
+**File**: `DhikrCounter Watch App/DhikrDetectionEngine.swift`
 
-**Key tasks:**
+**Current state**: Collects raw sensor data at 50Hz but does NOT perform pinch detection.
 
-1. **Copy StreamingPinchDetector.swift to Watch target**
-   - File needs to be added to "DhikrCounter Watch App" target in Xcode
+**Changes required**:
+```swift
+// Add property
+private var streamingDetector: StreamingPinchDetector?
 
-2. **Update DhikrDetectionEngine for streaming mode**
-   - Replace batch processing with StreamingPinchDetector
-   - Add `useTemplateValidation` toggle option
-   - Connect to CMMotionManager at 50Hz
+// In startRawDataCollection():
+// Initialize detector with config and templates
+let config = PinchConfig()  // Use defaults
+let templates = loadBundledTemplates()
+streamingDetector = StreamingPinchDetector(
+    config: config,
+    templates: templates,
+    useTemplateValidation: true  // or false for energy-only mode
+)
 
-3. **Add haptic feedback**
-   ```swift
-   WKInterfaceDevice.current().play(.click)
-   ```
+// In collectRawSensorData(_:):
+// Create SensorFrame from CMDeviceMotion
+let frame = SensorFrame(
+    t: motion.timestamp,
+    ax: Float(motion.userAcceleration.x),
+    ay: Float(motion.userAcceleration.y),
+    az: Float(motion.userAcceleration.z),
+    gx: Float(motion.rotationRate.x),
+    gy: Float(motion.rotationRate.y),
+    gz: Float(motion.rotationRate.z)
+)
 
-4. **Thread safety**
-   - Dedicated serial DispatchQueue for sensor processing
-   - Main thread for haptic feedback
-
-5. **Template management**
-   - Load templates from shared container or bundle
-   - Optional: Use TemplateRecorder to capture Watch-specific patterns
-
-### Validation Priorities:
-
-1. **Streaming vs Batch Parity**
-   - Run both detectors on same recorded session data
-   - Target: >90% detection agreement
-   - Document any timing differences due to causal filtering
-
-2. **On-device Performance**
-   - Processing time <0.5ms per sample at 50Hz
-   - Battery impact <5% additional drain
-   - Memory footprint <10MB
-
-3. **Real-world Testing**
-   - Test with various pinch patterns
-   - Verify haptic feedback latency <200ms
-   - Check false positive rate during normal wrist motion
-
-## Architecture Summary
-
-```
-SensorFrame (50Hz from CMMotionManager)
-    │
-    ▼
-┌─────────────────────────────────────┐
-│     StreamingPinchDetector          │
-│  ┌─────────────────────────────┐   │
-│  │ Phase 1: DSP Pipeline        │   │
-│  │ filter → TKEO → L2 → σ/μ    │   │
-│  └─────────────────────────────┘   │
-│              │                      │
-│              ▼                      │
-│  ┌─────────────────────────────┐   │
-│  │ Phase 2: Peak Detection      │   │
-│  │ state machine + refractory   │   │
-│  └─────────────────────────────┘   │
-│              │                      │
-│              ▼                      │
-│  ┌─────────────────────────────┐   │
-│  │ Phase 3: Quality Gates       │   │
-│  │ • Gyro veto (run-length)    │   │
-│  │ • Amplitude surplus guard   │   │
-│  │ • ISI threshold guard       │   │
-│  │ • Template matching (NCC)   │   │
-│  └─────────────────────────────┘   │
-└─────────────────────────────────────┘
-    │
-    ▼
-PinchEvent? → Haptic feedback on Watch
+// Process and detect
+if let event = streamingDetector?.process(frame: frame) {
+    DispatchQueue.main.async {
+        self.registerStreamingPinch(event: event)
+    }
+}
 ```
 
-## Notes for Resume:
-- All Phase 3 quality gates implemented and tested (build succeeds)
-- TemplateRecorder ready for capturing new patterns
-- Focus next session on Watch deployment (Phase 4)
-- Consider running parity validation before deploying to Watch
+#### Step 4: Add Haptic Feedback
+**In DhikrDetectionEngine**:
+```swift
+private func registerStreamingPinch(event: PinchEvent) {
+    pinchCount += 1
+    lastDetectionTime = Date()
+
+    // Haptic feedback
+    let newMilestone = calculateMilestone(count: pinchCount)
+    if newMilestone > currentMilestone {
+        currentMilestone = newMilestone
+        provideMilestoneHaptic(milestone: newMilestone)
+    } else {
+        WKInterfaceDevice.current().play(.click)
+    }
+
+    // Log detection for data transfer
+    logDetectionEvent(score: event.confidence, ...)
+}
+```
+
+#### Step 5: Bundle Default Templates
+**Options**:
+1. **Bundle JSON file**: Include `default_template.json` in Watch app bundle
+2. **Hardcoded default**: Use `PinchDetector.createDefaultTemplate()`
+3. **Transfer from iPhone**: Use WatchConnectivity to sync templates
+
+**Recommended**: Start with hardcoded default, add template sync later.
+
+### Thread Safety Architecture
+
+```
+┌─────────────────────────────────────────┐
+│         CMMotionManager (50Hz)          │
+│         (motionQueue - serial)          │
+└───────────────────┬─────────────────────┘
+                    │
+                    ▼
+┌─────────────────────────────────────────┐
+│     StreamingPinchDetector.process()    │
+│         (on motionQueue)                │
+└───────────────────┬─────────────────────┘
+                    │
+                    ▼ PinchEvent?
+┌─────────────────────────────────────────┐
+│     DispatchQueue.main.async {}         │
+│     - registerStreamingPinch()          │
+│     - WKInterfaceDevice.play(.click)    │
+│     - Update UI state                   │
+└─────────────────────────────────────────┘
+```
+
+### Files to Modify/Create
+
+| File | Action | Notes |
+|------|--------|-------|
+| `Shared/PinchTypes.swift` | CREATE | Shared types for both targets |
+| `DhikrCounter Watch App/StreamingPinchDetector.swift` | CREATE | Copy from iOS target |
+| `DhikrCounter Watch App/DhikrDetectionEngine.swift` | MODIFY | Integrate streaming detector |
+| `DhikrCounter.xcodeproj` | MODIFY | Add files to Watch target (manual in Xcode) |
+
+### Validation Checklist
+
+- [ ] Build succeeds for Watch target
+- [ ] Detector initializes without crash
+- [ ] Haptic feedback fires on pinch detection
+- [ ] No excessive battery drain (monitor in Xcode)
+- [ ] Processing time <0.5ms per sample (20ms budget at 50Hz)
+- [ ] Memory footprint stable (no leaks)
+- [ ] Works with template validation enabled
+- [ ] Works with template validation disabled (energy-only)
+
+### Performance Targets
+
+| Metric | Target | Measurement Method |
+|--------|--------|-------------------|
+| Processing latency | <0.5ms/sample | CFAbsoluteTimeGetCurrent() |
+| Detection latency | <200ms | Time from motion to haptic |
+| Memory footprint | <10MB | Xcode Memory Gauge |
+| Battery impact | <5% additional | Energy Impact in Xcode |
+
+### Risk Mitigation
+
+1. **vDSP availability**: Already tested - Accelerate framework works on watchOS
+2. **Memory constraints**: CircularBuffer has fixed size, no unbounded growth
+3. **CPU spikes**: All operations are O(1) or O(n) where n is small constant
+4. **Template loading**: Use fallback to default if bundle load fails
+
+## Notes for Resume
+
+- Branch created: `phase4-watch-deployment`
+- Need to add files to Watch target in Xcode project
+- Current DhikrDetectionEngine only collects data, doesn't detect
+- Streaming detector ready to integrate (1200 lines, well-tested)
