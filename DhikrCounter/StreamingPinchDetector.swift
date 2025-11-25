@@ -864,3 +864,216 @@ private struct CircularBuffer<T> {
         return result
     }
 }
+
+// MARK: - TemplateRecorder
+
+/// Records new pinch templates from detected events
+/// Buffers fused signal history and extracts template windows around peaks
+public final class TemplateRecorder {
+
+    /// Recorded template data
+    public struct RecordedTemplate {
+        public let data: [Float]
+        public let timestamp: Double
+        public let peakValue: Float
+        public let nccScore: Float?  // NCC against existing templates (nil if no templates)
+    }
+
+    // Configuration
+    private let fs: Float
+    private let preMs: Float
+    private let postMs: Float
+    private let targetLength: Int
+
+    // Signal history buffer
+    private var signalBuffer: CircularBuffer<Float>
+    private var timestampBuffer: CircularBuffer<Double>
+    private let bufferSize: Int
+
+    // Recorded templates
+    private var recordedTemplates: [RecordedTemplate] = []
+    public var isRecording: Bool = false
+
+    public init(fs: Float = 50.0, preMs: Float = 150.0, postMs: Float = 250.0) {
+        self.fs = fs
+        self.preMs = preMs
+        self.postMs = postMs
+
+        // Calculate target length (preS + postS + 1 for center sample)
+        let preS = Int(preMs * fs / 1000.0)
+        let postS = Int(postMs * fs / 1000.0)
+        self.targetLength = preS + postS + 1
+
+        // Buffer needs enough history for template extraction
+        let bufferDurationMs = (preMs + postMs) * 2.0  // Extra safety margin
+        self.bufferSize = Int(bufferDurationMs * fs / 1000.0)
+
+        self.signalBuffer = CircularBuffer<Float>(capacity: bufferSize)
+        self.timestampBuffer = CircularBuffer<Double>(capacity: bufferSize)
+    }
+
+    /// Add signal sample to history buffer
+    public func addSample(_ signal: Float, timestamp: Double) {
+        signalBuffer.append(signal)
+        timestampBuffer.append(timestamp)
+    }
+
+    /// Record a template around a detected peak
+    /// Returns the extracted template if successful
+    @discardableResult
+    public func recordTemplate(peakTimestamp: Double, peakValue: Float, nccScore: Float? = nil) -> RecordedTemplate? {
+        guard isRecording else { return nil }
+
+        let timestamps = timestampBuffer.toArray()
+        let signals = signalBuffer.toArray()
+
+        guard signals.count >= targetLength else {
+            return nil
+        }
+
+        // Find index closest to peak timestamp
+        guard let peakIndex = findClosestIndex(to: peakTimestamp, in: timestamps) else {
+            return nil
+        }
+
+        // Extract window around peak
+        let preS = Int(preMs * fs / 1000.0)
+        let postS = Int(postMs * fs / 1000.0)
+
+        let window = extractWindow(
+            center: peakIndex,
+            from: signals,
+            preS: preS,
+            postS: postS,
+            targetLength: targetLength
+        )
+
+        guard window.count == targetLength else {
+            return nil
+        }
+
+        // Normalize template (zero mean, unit variance)
+        let normalizedData = normalizeTemplate(window)
+
+        let template = RecordedTemplate(
+            data: normalizedData,
+            timestamp: peakTimestamp,
+            peakValue: peakValue,
+            nccScore: nccScore
+        )
+
+        recordedTemplates.append(template)
+        return template
+    }
+
+    /// Get all recorded templates
+    public func getRecordedTemplates() -> [RecordedTemplate] {
+        return recordedTemplates
+    }
+
+    /// Clear all recorded templates
+    public func clearRecordedTemplates() {
+        recordedTemplates.removeAll()
+    }
+
+    /// Export templates to JSON-compatible format
+    public func exportTemplatesAsJSON() -> [[Double]] {
+        return recordedTemplates.map { template in
+            template.data.map { Double($0) }
+        }
+    }
+
+    /// Convert recorded templates to PinchTemplate format for use in detector
+    public func toPinchTemplates() -> [PinchTemplate] {
+        return recordedTemplates.enumerated().map { (index, recorded) in
+            PinchTemplate(
+                fs: fs,
+                preMs: preMs,
+                postMs: postMs,
+                vectorLength: recorded.data.count,
+                data: recorded.data,
+                channelsMeta: "recorded_template_\(index + 1)",
+                version: "1.0"
+            )
+        }
+    }
+
+    /// Start recording
+    public func startRecording() {
+        isRecording = true
+    }
+
+    /// Stop recording
+    public func stopRecording() {
+        isRecording = false
+    }
+
+    /// Reset all state
+    public func reset() {
+        signalBuffer.removeAll()
+        timestampBuffer.removeAll()
+        recordedTemplates.removeAll()
+        isRecording = false
+    }
+
+    // MARK: - Private Methods
+
+    private func findClosestIndex(to timestamp: Double, in timestamps: [Double]) -> Int? {
+        guard !timestamps.isEmpty else { return nil }
+
+        var closestIndex = 0
+        var minDiff = abs(timestamps[0] - timestamp)
+
+        for (index, ts) in timestamps.enumerated() {
+            let diff = abs(ts - timestamp)
+            if diff < minDiff {
+                minDiff = diff
+                closestIndex = index
+            }
+        }
+
+        return closestIndex
+    }
+
+    private func extractWindow(center: Int, from signals: [Float], preS: Int, postS: Int, targetLength: Int) -> [Float] {
+        let startIndex = max(0, center - preS)
+        let endIndex = min(signals.count - 1, center + postS)
+
+        var window = Array(signals[startIndex...endIndex])
+
+        // Pad if necessary
+        if window.count < targetLength {
+            let shortfall = targetLength - window.count
+            if startIndex == 0 {
+                let padding = Array(repeating: signals.first ?? 0, count: shortfall)
+                window = padding + window
+            } else if endIndex == signals.count - 1 {
+                let padding = Array(repeating: signals.last ?? 0, count: shortfall)
+                window = window + padding
+            }
+        }
+
+        return Array(window.prefix(targetLength))
+    }
+
+    private func normalizeTemplate(_ data: [Float]) -> [Float] {
+        guard !data.isEmpty else { return data }
+
+        // Compute mean
+        let mean = data.reduce(0, +) / Float(data.count)
+
+        // Center the data
+        var centered = data.map { $0 - mean }
+
+        // Compute standard deviation
+        let variance = centered.map { $0 * $0 }.reduce(0, +) / Float(data.count)
+        let stdDev = sqrt(variance)
+
+        // Normalize to unit variance (if stdDev > 0)
+        if stdDev > 1e-6 {
+            centered = centered.map { $0 / stdDev }
+        }
+
+        return centered
+    }
+}
