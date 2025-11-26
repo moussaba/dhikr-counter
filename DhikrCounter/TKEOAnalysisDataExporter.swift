@@ -12,9 +12,10 @@ class TKEOAnalysisDataExporter {
         sensorData: [SensorReading],
         detectedEvents: [PinchEvent],
         debugLogs: [String],
-        options: TKEOExportOptions
+        options: TKEOExportOptions,
+        watchDetectorMetadata: WatchDetectorMetadata? = nil
     ) async throws -> TKEOAnalysisExport {
-        
+
         // Session metadata
         let sessionMetadata = ExportSessionMetadata(
             sessionId: session.id.uuidString,
@@ -28,29 +29,30 @@ class TKEOAnalysisDataExporter {
             sessionNotes: session.sessionNotes,
             actualPinchCount: session.actualPinchCount // Keep original actual count
         )
-        
+
         // Algorithm configuration (from current settings)
         let algorithmConfiguration = createAlgorithmConfiguration()
-        
+
         // Raw sensor data
         let rawData = createRawSensorData(from: sensorData)
-        
+
         // Analysis results
         let analysisResults = createAnalysisResults(from: detectedEvents)
-        
+
         // Debug information
         let debugInformation = createDebugInformation(from: debugLogs, detectedEvents: detectedEvents)
-        
+
         // Export metadata
         let exportMetadata = createExportMetadata(options: options)
-        
+
         return TKEOAnalysisExport(
             sessionMetadata: sessionMetadata,
             algorithmConfiguration: algorithmConfiguration,
             rawData: rawData,
             analysisResults: analysisResults,
             debugInformation: debugInformation,
-            exportMetadata: exportMetadata
+            exportMetadata: exportMetadata,
+            watchDetectorMetadata: watchDetectorMetadata
         )
     }
     

@@ -234,12 +234,31 @@ class PhoneSessionManager: NSObject, ObservableObject {
         // Load from file to check motion interruptions
         let fileName = "session_\(sessionId).json"
         let fileURL = sessionsDirectory.appendingPathComponent(fileName)
-        
+
         if let persistedData = loadPersistedSessionData(from: fileURL), let interruptions = persistedData.motionInterruptions {
             return interruptions.count
         }
-        
+
         return 0
+    }
+
+    /// Get Watch detector metadata for a session
+    func getWatchDetectorMetadata(for sessionId: String) -> WatchDetectorMetadata? {
+        let fileName = "session_\(sessionId).json"
+        let fileURL = sessionsDirectory.appendingPathComponent(fileName)
+
+        let persistedData = loadPersistedSessionData(from: fileURL)
+        if persistedData == nil {
+            print("⚠️ getWatchDetectorMetadata: No persisted data found for session \(sessionId.prefix(8))")
+        } else if persistedData?.watchDetectorMetadata == nil {
+            print("⚠️ getWatchDetectorMetadata: Session \(sessionId.prefix(8)) has no watchDetectorMetadata")
+        }
+        return persistedData?.watchDetectorMetadata
+    }
+
+    /// Get Watch detector summary string for display
+    func getWatchDetectorSummary(for sessionId: String) -> String? {
+        return getWatchDetectorMetadata(for: sessionId)?.summary()
     }
     
     private func loadPersistedSessionData(from fileURL: URL) -> PersistedSessionData? {
@@ -249,6 +268,7 @@ class PhoneSessionManager: NSObject, ObservableObject {
             decoder.dateDecodingStrategy = .iso8601
             return try decoder.decode(PersistedSessionData.self, from: data)
         } catch {
+            print("⚠️ loadPersistedSessionData failed for \(fileURL.lastPathComponent): \(error)")
             return nil
         }
     }
@@ -257,31 +277,90 @@ class PhoneSessionManager: NSObject, ObservableObject {
         super.init()
         setupFileStorage()
         setupWatchConnectivity()
-        syncExportFormatToWatch()
-        
+        syncSettingsToWatch()
+
         // Load sessions in background to avoid blocking UI startup
         Task {
             await loadPersistedSessionsAsync()
         }
     }
     
-    private func syncExportFormatToWatch() {
-        let exportFormat = UserDefaults.standard.string(forKey: "exportFormat") ?? "JSON"
+    private func syncSettingsToWatch() {
+        let defaults = UserDefaults.standard
         let session = WCSession.default
-        
-        guard session.activationState == .activated && session.isPaired else {
+
+        guard session.activationState == .activated else {
+            addDebugMessage("Cannot sync settings: WCSession not activated")
             return
         }
-        
+
+        guard session.isPaired else {
+            addDebugMessage("Cannot sync settings: Watch not paired")
+            return
+        }
+
+        print("📱 Syncing settings to Watch (paired: \(session.isPaired), reachable: \(session.isReachable))")
+
+        // Helper to get double with fallback (checks if key exists, not if value is non-zero)
+        func getDouble(_ key: String, fallback: Double) -> Double {
+            return defaults.object(forKey: key) != nil ? defaults.double(forKey: key) : fallback
+        }
+
+        // Build context with all settings
+        let context: [String: Any] = [
+            "exportFormat": defaults.string(forKey: "exportFormat") ?? "JSON",
+
+            // TKEO Detection Parameters
+            "tkeo_sampleRate": getDouble("tkeo_sampleRate", fallback: 50.0),
+            "tkeo_bandpassLow": getDouble("tkeo_bandpassLow", fallback: 3.0),
+            "tkeo_bandpassHigh": getDouble("tkeo_bandpassHigh", fallback: 20.0),
+            "tkeo_gateThreshold": getDouble("tkeo_gateThreshold", fallback: 3.5),
+            "tkeo_accelWeight": getDouble("tkeo_accelWeight", fallback: 1.0),
+            "tkeo_gyroWeight": getDouble("tkeo_gyroWeight", fallback: 1.5),
+            "tkeo_refractoryPeriod": getDouble("tkeo_refractoryPeriod", fallback: 0.15),
+            "tkeo_templateConfidence": getDouble("tkeo_templateConfidence", fallback: 0.6),
+            "tkeo_useTemplateValidation": defaults.object(forKey: "tkeo_useTemplateValidation") != nil ? defaults.bool(forKey: "tkeo_useTemplateValidation") : true,
+            "tkeo_amplitudeSurplusThresh": getDouble("tkeo_amplitudeSurplusThresh", fallback: 2.5),
+            "tkeo_isiThresholdMs": getDouble("tkeo_isiThresholdMs", fallback: 250),
+
+            // Bookend Spike Protection Parameters
+            "tkeo_ignoreStartMs": getDouble("tkeo_ignoreStartMs", fallback: 200),
+            "tkeo_ignoreEndMs": getDouble("tkeo_ignoreEndMs", fallback: 200),
+            "tkeo_gateRampMs": getDouble("tkeo_gateRampMs", fallback: 0),
+            "tkeo_gyroVetoThresh": getDouble("tkeo_gyroVetoThresh", fallback: 2.5),
+            "tkeo_gyroVetoHoldMs": getDouble("tkeo_gyroVetoHoldMs", fallback: 100),
+            "tkeo_preQuietMs": getDouble("tkeo_preQuietMs", fallback: 0),
+
+            // Algorithm Tuning Parameters
+            "tkeo_madWinSec": getDouble("tkeo_madWinSec", fallback: 3.0),
+            "tkeo_minWidthMs": getDouble("tkeo_minWidthMs", fallback: 70),
+            "tkeo_maxWidthMs": getDouble("tkeo_maxWidthMs", fallback: 350),
+            "tkeo_windowPreMs": getDouble("tkeo_windowPreMs", fallback: 150),
+            "tkeo_windowPostMs": getDouble("tkeo_windowPostMs", fallback: 150)
+        ]
+
+        // Log key values being synced
+        print("📱 Syncing TKEO settings:")
+        print("   - gateThreshold: \(context["tkeo_gateThreshold"] ?? "nil")")
+        print("   - gyroVetoThresh: \(context["tkeo_gyroVetoThresh"] ?? "nil")")
+        print("   - amplitudeSurplusThresh: \(context["tkeo_amplitudeSurplusThresh"] ?? "nil")")
+        print("   - templateConfidence: \(context["tkeo_templateConfidence"] ?? "nil")")
+
         do {
-            try session.updateApplicationContext(["exportFormat": exportFormat])
+            try session.updateApplicationContext(context)
+            addDebugMessage("Settings synced to Watch (\(context.count) parameters)")
         } catch {
-            addDebugMessage("Failed to sync export format: \(error.localizedDescription)")
+            addDebugMessage("Failed to sync settings: \(error.localizedDescription)")
         }
     }
-    
+
     func updateExportFormat() {
-        syncExportFormatToWatch()
+        syncSettingsToWatch()
+    }
+
+    /// Call this to sync all TKEO settings to Watch
+    func syncAllSettingsToWatch() {
+        syncSettingsToWatch()
     }
     
     private func setupWatchConnectivity() {
@@ -522,14 +601,17 @@ class PhoneSessionManager: NSObject, ObservableObject {
         }
     }
     
-    private func saveSession(_ session: DhikrSession, sensorData: [SensorReading], detectionEvents: [DetectionEvent], motionInterruptions: [MotionInterruption] = []) {
+    private func saveSession(_ session: DhikrSession, sensorData: [SensorReading], detectionEvents: [DetectionEvent], motionInterruptions: [MotionInterruption] = [], watchDetectorMetadata: WatchDetectorMetadata? = nil) {
         addDebugMessage("💾 SAVING SESSION:")
         addDebugMessage("   • ID: \(session.id.uuidString.prefix(8))")
         addDebugMessage("   • Sensor readings: \(sensorData.count)")
         addDebugMessage("   • Detection events: \(detectionEvents.count)")
         addDebugMessage("   • Motion interruptions: \(motionInterruptions.count)")
         addDebugMessage("   • Duration: \(String(format: "%.1fs", session.sessionDuration))")
-        
+        if let metadata = watchDetectorMetadata {
+            addDebugMessage("   • Watch detector: \(metadata.configSource), gateK=\(String(format: "%.1f", metadata.gateK))")
+        }
+
         let sessionData = PersistedSessionData(
             sessionId: session.id,
             startTime: session.startTime,
@@ -542,7 +624,8 @@ class PhoneSessionManager: NSObject, ObservableObject {
             actualPinchCount: session.actualPinchCount,
             sensorData: sensorData,
             detectionEvents: detectionEvents,
-            motionInterruptions: motionInterruptions.isEmpty ? nil : motionInterruptions
+            motionInterruptions: motionInterruptions.isEmpty ? nil : motionInterruptions,
+            watchDetectorMetadata: watchDetectorMetadata
         )
         
         let fileName = "session_\(session.id.uuidString).json"
@@ -642,9 +725,9 @@ extension PhoneSessionManager: @preconcurrency WCSessionDelegate {
             case .activated:
                 self.isWatchConnected = session.isReachable && session.isPaired
                 self.lastReceiveStatus = "Watch connectivity activated - Reachable: \(session.isReachable), Paired: \(session.isPaired)"
-                
-                // Sync export format after activation
-                self.syncExportFormatToWatch()
+
+                // Sync all settings after activation
+                self.syncSettingsToWatch()
                 
                 // Force check after a delay
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
@@ -814,11 +897,37 @@ extension PhoneSessionManager: @preconcurrency WCSessionDelegate {
         }
         
         let format = metadata["format"] as? String ?? "JSON"
-        
+
+        // Extract watchDetectorMetadata from transfer metadata (for CSV format)
+        var watchDetectorMetadataFromTransfer: WatchDetectorMetadata? = nil
+        if let metadataJSON = metadata["watchDetectorMetadataJSON"] as? String,
+           !metadataJSON.isEmpty,
+           let metadataData = metadataJSON.data(using: .utf8) {
+            do {
+                watchDetectorMetadataFromTransfer = try JSONDecoder().decode(WatchDetectorMetadata.self, from: metadataData)
+                print("📥 Extracted watchDetectorMetadata from transfer metadata")
+            } catch {
+                print("⚠️ Failed to decode watchDetectorMetadata from transfer metadata: \(error)")
+            }
+        }
+
         // Process file data in background
         Task {
             do {
-                let sessionData = try await processSessionFile(data: fileData, format: format, sessionIdString: sessionIdString)
+                var sessionData = try await processSessionFile(data: fileData, format: format, sessionIdString: sessionIdString)
+
+                // If we got metadata from transfer metadata (CSV case), use it
+                if sessionData.watchDetectorMetadata == nil && watchDetectorMetadataFromTransfer != nil {
+                    sessionData = SessionData(
+                        sessionId: sessionData.sessionId,
+                        timestamp: sessionData.timestamp,
+                        sensorData: sessionData.sensorData,
+                        detectionEvents: sessionData.detectionEvents,
+                        motionInterruptions: sessionData.motionInterruptions,
+                        watchDetectorMetadata: watchDetectorMetadataFromTransfer
+                    )
+                    print("📥 Added watchDetectorMetadata from transfer metadata to SessionData")
+                }
                 
                 await MainActor.run {
                     // Store the data
@@ -845,12 +954,15 @@ extension PhoneSessionManager: @preconcurrency WCSessionDelegate {
                     self.lastReceiveStatus = "✅ Received \(sessionData.sensorData.count) readings"
                     self.isReceivingFile = false
                     self.fileTransferProgress = ""
-                    
-                    // Save session to disk  
+
+                    // Save session to disk
                     let motionInterruptions = sessionData.motionInterruptions ?? []
-                    self.saveSession(session, sensorData: sessionData.sensorData, detectionEvents: sessionData.detectionEvents, motionInterruptions: motionInterruptions)
-                    
-                    let successMessage = "✅ Successfully processed file: \(sessionData.sensorData.count) sensor readings, \(sessionData.detectionEvents.count) events"
+                    self.saveSession(session, sensorData: sessionData.sensorData, detectionEvents: sessionData.detectionEvents, motionInterruptions: motionInterruptions, watchDetectorMetadata: sessionData.watchDetectorMetadata)
+
+                    var successMessage = "✅ Successfully processed file: \(sessionData.sensorData.count) sensor readings, \(sessionData.detectionEvents.count) events"
+                    if sessionData.watchDetectorMetadata != nil {
+                        successMessage += " (with Watch detector metadata)"
+                    }
                     self.addDebugMessage(successMessage)
                 }
                 
@@ -867,14 +979,23 @@ extension PhoneSessionManager: @preconcurrency WCSessionDelegate {
     }
     
     private func processSessionFile(data: Data, format: String, sessionIdString: String) async throws -> SessionData {
-        
+
         if format == "CSV" {
             return try parseCSVSessionData(data: data, sessionIdString: sessionIdString)
         } else {
+            // Debug: Check if watchDetectorMetadata is in the received JSON
+            if let jsonString = String(data: data, encoding: .utf8) {
+                let hasMetadataKey = jsonString.contains("watchDetectorMetadata")
+                let metadataIsNull = jsonString.contains("\"watchDetectorMetadata\":null")
+                print("📥 Received JSON contains watchDetectorMetadata key: \(hasMetadataKey), isNull: \(metadataIsNull)")
+            }
+
             // Default to JSON
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
-            return try decoder.decode(SessionData.self, from: data)
+            let sessionData = try decoder.decode(SessionData.self, from: data)
+            print("📥 Decoded SessionData: watchDetectorMetadata is nil? \(sessionData.watchDetectorMetadata == nil)")
+            return sessionData
         }
     }
     
@@ -958,7 +1079,8 @@ extension PhoneSessionManager: @preconcurrency WCSessionDelegate {
             timestamp: Date().timeIntervalSince1970,
             sensorData: sensorReadings,
             detectionEvents: [], // CSV format doesn't include detection events separately
-            motionInterruptions: [] // CSV format doesn't parse motion interruptions separately
+            motionInterruptions: [], // CSV format doesn't parse motion interruptions separately
+            watchDetectorMetadata: nil // CSV format doesn't include detector metadata
         )
     }
 }
@@ -971,6 +1093,7 @@ private struct SessionData: Codable {
     let sensorData: [SensorReading]
     let detectionEvents: [DetectionEvent]
     let motionInterruptions: [MotionInterruption]?
+    let watchDetectorMetadata: WatchDetectorMetadata?
 }
 
 // Lightweight metadata for fast startup loading
@@ -1014,7 +1137,8 @@ private struct PersistedSessionData: Codable {
     let sensorData: [SensorReading]
     let detectionEvents: [DetectionEvent]
     let motionInterruptions: [MotionInterruption]?
-    
+    let watchDetectorMetadata: WatchDetectorMetadata?
+
     func toDhikrSession() -> DhikrSession {
         return DhikrSession.createWithId(
             id: sessionId,

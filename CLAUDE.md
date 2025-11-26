@@ -43,3 +43,4 @@ Available schemes:
 - UI shows real metrics from transferred sensor data
 - Debug logging removed from frequently called methods to prevent spam
 - use .venv or venv for python
+- We are using the Iphone 16 Pro Max simulator which has existing session information. Let's always use it for testing o fthe iphone app.

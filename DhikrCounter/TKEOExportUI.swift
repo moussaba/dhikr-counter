@@ -6,9 +6,14 @@ struct TKEOAnalysisExportSheet: View {
     let session: DhikrSession
     let sensorData: [SensorReading]
     let detectedEvents: [PinchEvent]
-    
+
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var dataManager = PhoneSessionManager.shared
+
+    /// Watch detector metadata (loaded on demand)
+    private var watchDetectorMetadata: WatchDetectorMetadata? {
+        dataManager.getWatchDetectorMetadata(for: session.id.uuidString)
+    }
     
     @State private var exportOptions = TKEOExportOptions.default
     @State private var isExporting = false
@@ -339,9 +344,10 @@ struct TKEOAnalysisExportSheet: View {
                     sensorData: sensorData,
                     detectedEvents: detectedEvents,
                     debugLogs: [], // Get from TKEO card if needed
-                    options: exportOptions
+                    options: exportOptions,
+                    watchDetectorMetadata: watchDetectorMetadata
                 )
-                
+
                 await MainActor.run {
                     self.previewData = exportData
                     self.showingPreview = true
@@ -376,9 +382,10 @@ struct TKEOAnalysisExportSheet: View {
                 sensorData: sensorData,
                 detectedEvents: detectedEvents,
                 debugLogs: [], // Get from detection card if needed
-                options: exportOptions
+                options: exportOptions,
+                watchDetectorMetadata: watchDetectorMetadata
             )
-            
+
             exportProgress = 0.2
             exportStatus = "Generating chart images..."
             

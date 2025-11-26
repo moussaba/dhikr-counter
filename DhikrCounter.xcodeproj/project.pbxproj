@@ -32,6 +32,7 @@
 		F505F6572E66C792003714BE /* WatchSessionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F505F6562E66C792003714BE /* WatchSessionManager.swift */; };
 		F505F6592E66C7A2003714BE /* PhoneSessionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F505F6582E66C7A2003714BE /* PhoneSessionManager.swift */; };
 		F531EB3C2E6D23CD00CCD0B6 /* trained_templates.json in Resources */ = {isa = PBXBuildFile; fileRef = F531EB3B2E6D23CD00CCD0B6 /* trained_templates.json */; };
+		F531EB3D2E6D23CD00CCD0B7 /* trained_templates.json in Resources */ = {isa = PBXBuildFile; fileRef = F531EB3B2E6D23CD00CCD0B6 /* trained_templates.json */; };
 		F531EB422E6D795400CCD0B6 /* PinchDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = F531EB412E6D795400CCD0B6 /* PinchDetector.swift */; };
 		F531EB5C2E6E778900CCD0B6 /* TKEOExportUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F531EB592E6E778900CCD0B6 /* TKEOExportUI.swift */; };
 		F531EB5D2E6E778900CCD0B6 /* TKEOHTMLReportGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F531EB5A2E6E778900CCD0B6 /* TKEOHTMLReportGenerator.swift */; };
@@ -41,6 +42,8 @@
 		F575EFA62E7DA258006F82C7 /* StreamingPinchDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = F575EFA42E7DA258006F82C7 /* StreamingPinchDetector.swift */; };
 		F575EFA72E86A100006F82C7 /* StreamingPinchDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = F575EFA52E86A100006F82C7 /* StreamingPinchDetector.swift */; };
 		F575EFA92E86A100006F82C7 /* PinchTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = F575EFA82E86A100006F82C7 /* PinchTypes.swift */; };
+		F575EFAA2E86A100006F82C8 /* PinchTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = F575EFA82E86A100006F82C7 /* PinchTypes.swift */; };
+		F58368412ED6B8E00044F9A9 /* SettingsHelpView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F58368402ED6B8E00044F9A9 /* SettingsHelpView.swift */; };
 		F5991E902E66F499006885C5 /* DhikrCounter Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 31683209E7C5139A132FBBC6 /* DhikrCounter Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		FAAC33ABD9E9A7C22A589960 /* WatchKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B42F69224B2415F36C1294F4 /* WatchKit.framework */; };
 /* End PBXBuildFile section */
@@ -127,6 +130,7 @@
 		F575EFA42E7DA258006F82C7 /* StreamingPinchDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingPinchDetector.swift; sourceTree = "<group>"; };
 		F575EFA52E86A100006F82C7 /* StreamingPinchDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingPinchDetector.swift; sourceTree = "<group>"; };
 		F575EFA82E86A100006F82C7 /* PinchTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinchTypes.swift; sourceTree = "<group>"; };
+		F58368402ED6B8E00044F9A9 /* SettingsHelpView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsHelpView.swift; sourceTree = "<group>"; };
 		F657C64E8290259D316B999E /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
 		FEDA213EFCDD446253B7B013 /* DataVisualizationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataVisualizationView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -163,6 +167,7 @@
 		4AF01F2022C84C1A067DE418 /* DhikrCounter */ = {
 			isa = PBXGroup;
 			children = (
+				F58368402ED6B8E00044F9A9 /* SettingsHelpView.swift */,
 				F575EFA42E7DA258006F82C7 /* StreamingPinchDetector.swift */,
 				F531EB602E6E8B3E00CCD0B6 /* TKEOChartImageExporter.swift */,
 				F531EB562E6E778900CCD0B6 /* TKEOAnalysisDataExporter.swift */,
@@ -323,6 +328,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				0B20F841BCE8466863936F39 /* Assets.xcassets in Resources */,
+				F531EB3D2E6D23CD00CCD0B7 /* trained_templates.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -348,6 +354,7 @@
 				8B4DCF8588BB17059A74B1E5 /* DetectionEvent.swift in Sources */,
 				F531EB612E6E8B3E00CCD0B6 /* TKEOChartImageExporter.swift in Sources */,
 				05F5AF870A839A38B9E93944 /* DhikrCounterCompanionApp.swift in Sources */,
+				F58368412ED6B8E00044F9A9 /* SettingsHelpView.swift in Sources */,
 				5E9CAF645B9CD229BEBA4B60 /* DhikrSession.swift in Sources */,
 				F505F6592E66C7A2003714BE /* PhoneSessionManager.swift in Sources */,
 				F531EB5C2E6E778900CCD0B6 /* TKEOExportUI.swift in Sources */,
@@ -356,6 +363,7 @@
 				F531EB5E2E6E778900CCD0B6 /* TKEOAnalysisDataExporter.swift in Sources */,
 				F531EB5F2E6E778900CCD0B6 /* TKEOAnalysisExporter.swift in Sources */,
 				ADEF9BF1E2FE041A5D411AC8 /* SensorReading.swift in Sources */,
+				F575EFAA2E86A100006F82C8 /* PinchTypes.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -1,101 +1,21 @@
 import Foundation
 
-public struct SensorFrame {
-    let t: TimeInterval
-    let ax, ay, az: Float  // m/s²
-    let gx, gy, gz: Float  // rad/s
-}
+// MARK: - PinchConfig iOS Extensions
 
-public struct PinchEvent {
-    let tPeak, tStart, tEnd: TimeInterval
-    let confidence, gateScore, ncc: Float
-}
-
-public struct PinchConfig {
-    let fs: Float
-    let bandpassLow: Float
-    let bandpassHigh: Float
-    let accelWeight: Float
-    let gyroWeight: Float
-    let madWinSec: Float
-    let gateK: Float
-    let refractoryMs: Float
-    let minWidthMs: Float
-    let maxWidthMs: Float
-    let nccThresh: Float
-    let windowPreMs: Float
-    let windowPostMs: Float
-    
-    // Bookend spike protection parameters
-    let ignoreStartMs: Float
-    let ignoreEndMs: Float
-    let gateRampMs: Float
-    let gyroVetoThresh: Float     // rad/s
-    let gyroVetoHoldMs: Float     // require quiet for this long before enabling
-    let amplitudeSurplusThresh: Float  // σ over local MAD baseline required
-    let preQuietMs: Float         // pre-silence requirement
-    let isiThresholdMs: Float     // inter-spike interval threshold (ms)
-    
-    // Convenience initializer with default values to reduce brittleness
-    public init(
-        fs: Float = 50.0,
-        bandpassLow: Float = 3.0,
-        bandpassHigh: Float = 20.0,
-        accelWeight: Float = 1.0,
-        gyroWeight: Float = 1.5,
-        madWinSec: Float = 3.0,
-        gateK: Float = 3.5,
-        refractoryMs: Float = 150,
-        minWidthMs: Float = 60,
-        maxWidthMs: Float = 400,
-        nccThresh: Float = 0.55,
-        windowPreMs: Float = 150,
-        windowPostMs: Float = 250,
-        ignoreStartMs: Float = 500,
-        ignoreEndMs: Float = 500,
-        gateRampMs: Float = 1000,
-        gyroVetoThresh: Float = 1.2,
-        gyroVetoHoldMs: Float = 180,
-        amplitudeSurplusThresh: Float = 2.0,
-        preQuietMs: Float = 150,
-        isiThresholdMs: Float = 220
-    ) {
-        self.fs = fs
-        self.bandpassLow = bandpassLow
-        self.bandpassHigh = bandpassHigh
-        self.accelWeight = accelWeight
-        self.gyroWeight = gyroWeight
-        self.madWinSec = madWinSec
-        self.gateK = gateK
-        self.refractoryMs = refractoryMs
-        self.minWidthMs = minWidthMs
-        self.maxWidthMs = maxWidthMs
-        self.nccThresh = nccThresh
-        self.windowPreMs = windowPreMs
-        self.windowPostMs = windowPostMs
-        self.ignoreStartMs = ignoreStartMs
-        self.ignoreEndMs = ignoreEndMs
-        self.gateRampMs = gateRampMs
-        self.gyroVetoThresh = gyroVetoThresh
-        self.gyroVetoHoldMs = gyroVetoHoldMs
-        self.amplitudeSurplusThresh = amplitudeSurplusThresh
-        self.preQuietMs = preQuietMs
-        self.isiThresholdMs = isiThresholdMs
-    }
-    
+extension PinchConfig {
     // Static factory method for creating from UserDefaults with template-aware timing
     public static func fromUserDefaults(templates: [PinchTemplate] = []) -> PinchConfig {
         let userDefaults = UserDefaults.standard
-        
+
         // Calculate window timing from templates if available
         var windowPreMs: Float = 150
         var windowPostMs: Float = 150
-        
+
         if let firstTemplate = templates.first {
             windowPreMs = firstTemplate.preMs
             windowPostMs = firstTemplate.postMs
         }
-        
+
         return PinchConfig(
             fs: userDefaults.object(forKey: "tkeo_sampleRate") != nil ? Float(userDefaults.double(forKey: "tkeo_sampleRate")) : 50.0,
             bandpassLow: userDefaults.object(forKey: "tkeo_bandpassLow") != nil ? Float(userDefaults.double(forKey: "tkeo_bandpassLow")) : 3.0,
@@ -120,16 +40,6 @@ public struct PinchConfig {
             isiThresholdMs: userDefaults.object(forKey: "tkeo_isiThresholdMs") != nil ? Float(userDefaults.double(forKey: "tkeo_isiThresholdMs")) : 220
         )
     }
-}
-
-public struct PinchTemplate {
-    let fs: Float
-    let preMs: Float
-    let postMs: Float
-    let vectorLength: Int
-    let data: [Float]
-    let channelsMeta: String
-    let version: String
 }
 
 public final class PinchDetector {

@@ -12,6 +12,7 @@ struct TKEOAnalysisExport: Codable {
     let analysisResults: AnalysisResults
     let debugInformation: DebugInformation
     let exportMetadata: ExportMetadata
+    let watchDetectorMetadata: WatchDetectorMetadata?
 }
 
 /// Session metadata for export

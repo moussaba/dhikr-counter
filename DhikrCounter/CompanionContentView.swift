@@ -586,10 +586,10 @@ struct SettingsView: View {
                                     .foregroundColor(.secondary)
                             }
                             
-                            Slider(value: $gateThreshold, in: 2.0...6.0, step: 0.5) {
+                            Slider(value: $gateThreshold, in: 1.0...6.0, step: 0.5) {
                                 Text("Gate Threshold")
                             } minimumValueLabel: {
-                                Text("2.0")
+                                Text("1.0")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             } maximumValueLabel: {
@@ -1097,9 +1097,42 @@ struct SettingsView: View {
                     .padding(.vertical, 4)
                 }
                 
+                Section("Watch Sync") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Text("Sync Settings to Watch")
+                                    .foregroundColor(.primary)
+                                Text("Send current TKEO parameters to Apple Watch")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Button(action: {
+                                PhoneSessionManager.shared.syncAllSettingsToWatch()
+                            }) {
+                                HStack {
+                                    Image(systemName: "arrow.triangle.2.circlepath")
+                                    Text("Sync Now")
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                        }
+
+                        Text("Settings are automatically synced when the app launches and when the Watch connects.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                }
+
                 Section("About") {
                     SettingRow(title: "Version", value: "1.0")
                     SettingRow(title: "Algorithm Version", value: "Researcher Validated")
+                }
+
+                Section("Help") {
+                    SettingsHelpCard()
                 }
             }
             .navigationTitle("Settings")
@@ -1118,16 +1151,21 @@ struct SettingsView: View {
         templateConfidence = 0.75
         useTemplateValidation = true
         templateLength = 50
-        
+        amplitudeSurplusThresh = 3.0
+        isiThresholdMs = 300
+
         // Conservative bookend protection - more aggressive filtering
         ignoreStartMs = 300
         ignoreEndMs = 300
         gateRampMs = 0
-        gyroVetoThresh = 2.5
-        gyroVetoHoldMs = 100
+        gyroVetoThresh = 2.0
+        gyroVetoHoldMs = 150
         preQuietMs = 0
+
+        // Sync to Watch after applying preset
+        PhoneSessionManager.shared.syncAllSettingsToWatch()
     }
-    
+
     private func setDefaultPreset() {
         bandpassLow = 3.0
         bandpassHigh = 20.0
@@ -1138,16 +1176,21 @@ struct SettingsView: View {
         templateConfidence = 0.6
         useTemplateValidation = true
         templateLength = 40
-        
+        amplitudeSurplusThresh = 2.5
+        isiThresholdMs = 250
+
         // Default bookend protection - balanced settings
         ignoreStartMs = 200
         ignoreEndMs = 200
         gateRampMs = 0
-        gyroVetoThresh = 3.0
-        gyroVetoHoldMs = 50
+        gyroVetoThresh = 2.5
+        gyroVetoHoldMs = 100
         preQuietMs = 0
+
+        // Sync to Watch after applying preset
+        PhoneSessionManager.shared.syncAllSettingsToWatch()
     }
-    
+
     private func setSensitivePreset() {
         bandpassLow = 4.0
         bandpassHigh = 25.0
@@ -1158,14 +1201,19 @@ struct SettingsView: View {
         templateConfidence = 0.45
         useTemplateValidation = true
         templateLength = 30
-        
+        amplitudeSurplusThresh = 1.5
+        isiThresholdMs = 200
+
         // Sensitive bookend protection - minimal filtering
         ignoreStartMs = 100
         ignoreEndMs = 100
         gateRampMs = 0
-        gyroVetoThresh = 4.0
-        gyroVetoHoldMs = 25
+        gyroVetoThresh = 3.5
+        gyroVetoHoldMs = 50
         preQuietMs = 0
+
+        // Sync to Watch after applying preset
+        PhoneSessionManager.shared.syncAllSettingsToWatch()
     }
 }
 

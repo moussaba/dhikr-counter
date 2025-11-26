@@ -186,7 +186,7 @@ struct DataExportView: View {
                     .font(.title2)
                     .fontWeight(.semibold)
                 
-                let (sensorData, detectionEvents, motionInterruptions) = detectionEngine.exportSessionData()
+                let (sensorData, detectionEvents, motionInterruptions, _) = detectionEngine.exportSessionData()
                 
                 VStack(spacing: 12) {
                     DataSummaryRow(label: "Sensor Readings", count: sensorData.count)

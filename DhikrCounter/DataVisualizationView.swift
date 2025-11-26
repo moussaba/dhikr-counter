@@ -435,7 +435,10 @@ struct SessionDetailView: View {
             VStack(spacing: 20) {
                 // Session overview
                 SessionOverviewCard(session: session)
-                
+
+                // Watch detector metadata (if available)
+                WatchDetectorMetadataCard(sessionId: session.id.uuidString)
+
                 // Validation data
                 ValidationDataCard(session: session)
                 
@@ -580,6 +583,148 @@ struct OverviewItem: View {
         .padding()
         .background(Color(.systemGray6))
         .cornerRadius(8)
+    }
+}
+
+// MARK: - Watch Detector Metadata Card
+
+struct WatchDetectorMetadataCard: View {
+    let sessionId: String
+    @ObservedObject private var dataManager = PhoneSessionManager.shared
+    @State private var isExpanded = false
+
+    private var metadata: WatchDetectorMetadata? {
+        dataManager.getWatchDetectorMetadata(for: sessionId)
+    }
+
+    var body: some View {
+        if let metadata = metadata {
+            VStack(alignment: .leading, spacing: 12) {
+                // Header with expand toggle
+                Button(action: { withAnimation { isExpanded.toggle() } }) {
+                    HStack {
+                        Image(systemName: "applewatch")
+                            .foregroundColor(.blue)
+                        Text("Watch Detector Results")
+                            .font(.headline)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.primary)
+                        Spacer()
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+
+                // Summary row (always visible)
+                HStack(spacing: 16) {
+                    WatchMetadataItem(
+                        label: "Detected",
+                        value: "\(metadata.totalPinchesDetected)",
+                        color: .green
+                    )
+                    WatchMetadataItem(
+                        label: "Config",
+                        value: metadata.settingsReceivedFromPhone ? "Synced" : "Defaults",
+                        color: metadata.settingsReceivedFromPhone ? .blue : .orange
+                    )
+                    WatchMetadataItem(
+                        label: "Duration",
+                        value: String(format: "%.1fs", metadata.sessionDurationSeconds),
+                        color: .primary
+                    )
+                }
+
+                // Expanded details
+                if isExpanded {
+                    Divider()
+
+                    // Detection Statistics
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Detection Statistics")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(.secondary)
+
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 8) {
+                            WatchStatRow(label: "Candidates Evaluated", value: "\(metadata.totalCandidatesEvaluated)")
+                            WatchStatRow(label: "Rejected (Template)", value: "\(metadata.candidatesRejectedByTemplate)")
+                            WatchStatRow(label: "Rejected (Gyro Veto)", value: "\(metadata.candidatesRejectedByGyroVeto)")
+                            WatchStatRow(label: "Rejected (Amplitude)", value: "\(metadata.candidatesRejectedByAmplitude)")
+                            WatchStatRow(label: "Rejected (ISI)", value: "\(metadata.candidatesRejectedByISI)")
+                            WatchStatRow(label: "Avg NCC", value: String(format: "%.3f", metadata.avgNCC))
+                        }
+                    }
+
+                    Divider()
+
+                    // Algorithm Parameters
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Algorithm Parameters")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(.secondary)
+
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 8) {
+                            WatchStatRow(label: "Gate K", value: String(format: "%.2fσ", metadata.gateK))
+                            WatchStatRow(label: "NCC Thresh", value: String(format: "%.2f", metadata.nccThresh))
+                            WatchStatRow(label: "Gyro Veto", value: String(format: "%.2f rad/s", metadata.gyroVetoThresh))
+                            WatchStatRow(label: "Amplitude Surplus", value: String(format: "%.1fσ", metadata.amplitudeSurplusThresh))
+                            WatchStatRow(label: "ISI Threshold", value: String(format: "%.0fms", metadata.isiThresholdMs))
+                            WatchStatRow(label: "Refractory", value: String(format: "%.0fms", metadata.refractoryMs))
+                        }
+                    }
+                }
+            }
+            .padding()
+            .background(Color(.systemBackground))
+            .cornerRadius(16)
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(Color.blue.opacity(0.3), lineWidth: 1)
+            )
+        }
+        // If no metadata, show nothing (card is hidden)
+    }
+}
+
+struct WatchMetadataItem: View {
+    let label: String
+    let value: String
+    let color: Color
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Text(value)
+                .font(.title3)
+                .fontWeight(.bold)
+                .foregroundColor(color)
+            Text(label)
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+struct WatchStatRow: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack {
+            Text(label)
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Spacer()
+            Text(value)
+                .font(.caption)
+                .fontWeight(.medium)
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 8)
+        .background(Color(.systemGray6))
+        .cornerRadius(6)
     }
 }
 

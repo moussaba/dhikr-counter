@@ -49,6 +49,9 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
     @Published var currentMilestone: Int = 0
     @Published var sessionDuration: TimeInterval = 0.0
     @Published var lastSessionDuration: TimeInterval = 0.0  // Persists after session ends
+
+    // Force UI refresh trigger - increments on each detection to ensure watchOS redraws
+    @Published var uiRefreshTrigger: Int = 0
     
     // Data logging and transfer (with synchronization)
     private var sessionStartTime: Date?
@@ -89,6 +92,8 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
     private var streamingDetector: StreamingPinchDetector?
     private var useStreamingDetection: Bool = true  // Toggle for streaming vs raw-only mode
     private var useTemplateValidation: Bool = true  // Toggle for template matching vs energy-only
+    private var currentPinchConfig: PinchConfig?    // Store config used for this session
+    private var configSource: String = "watch_defaults"  // Track if from iPhone or defaults
 
     override init() {
         super.init()
@@ -539,24 +544,25 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
     
     private func registerPinch(score: Double, accel: Double, gyro: Double, time: Date, manual: Bool) {
         pinchCount += 1
+        uiRefreshTrigger += 1  // Force UI refresh on watchOS
         lastDetectionTime = time
-        
+
         // Check for milestones
         let newMilestone = calculateMilestone(count: pinchCount)
         let milestoneReached = newMilestone > currentMilestone
         currentMilestone = newMilestone
-        
+
         // Provide appropriate haptic feedback
         if milestoneReached {
             provideMilestoneHaptic(milestone: newMilestone)
         } else {
             WKInterfaceDevice.current().play(.click)
         }
-        
+
         // Log detection event
         logDetectionEvent(score: score, accel: accel, gyro: gyro, time: time, manual: manual)
-        
-        print("Pinch detected! Count: \(pinchCount), Score: \(score.rounded(toPlaces: 2)), Manual: \(manual)")
+
+        print("🔢 Pinch detected! Count: \(pinchCount), Score: \(score.rounded(toPlaces: 2)), Manual: \(manual)")
     }
     
     private func calculateMilestone(count: Int) -> Int {
@@ -581,29 +587,44 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
 
     // MARK: - Streaming Pinch Detection (Phase 4)
 
-    /// Initialize the streaming pinch detector with default config and template
+    /// Initialize the streaming pinch detector with config from iPhone settings or defaults
     private func initializeStreamingDetector() {
         print("🎯 Initializing streaming pinch detector...")
 
-        // Use Watch-optimized configuration
-        let config = PinchConfig.watchDefaults()
+        // Get configuration from synced settings or fall back to watch defaults
+        let config = WatchSessionManager.shared.buildPinchConfig()
+        let useTemplate = WatchSessionManager.shared.useTemplateValidation()
+        let hasPhoneSettings = WatchSessionManager.shared.hasReceivedSettings()
 
-        // Create default Gaussian template
-        let defaultTemplate = PinchTemplate.createDefault(fs: config.fs, preMs: config.windowPreMs, postMs: config.windowPostMs)
+        // Store config for metadata export
+        currentPinchConfig = config
+        configSource = hasPhoneSettings ? "iphone_synced" : "watch_defaults"
+
+        // Load trained templates from bundle (falls back to Gaussian if not found)
+        let templates = PinchTemplate.loadTrainedTemplates(fs: config.fs)
 
         // Initialize detector
         streamingDetector = StreamingPinchDetector(
             config: config,
-            templates: [defaultTemplate],
-            useTemplateValidation: useTemplateValidation
+            templates: templates,
+            useTemplateValidation: useTemplate
         )
 
-        print("✅ Streaming detector initialized (templateValidation: \(useTemplateValidation))")
+        // Log the configuration being used
+        print("✅ Streaming detector initialized:")
+        print("   - configSource: \(configSource)")
+        print("   - templates: \(templates.count) (\(templates.first?.version ?? "unknown"))")
+        print("   - gateK: \(config.gateK)")
+        print("   - nccThresh: \(config.nccThresh)")
+        print("   - gyroVetoThresh: \(config.gyroVetoThresh)")
+        print("   - isiThresholdMs: \(config.isiThresholdMs)")
+        print("   - templateValidation: \(useTemplate)")
     }
 
     /// Handle detected pinch event from streaming detector
     private func registerStreamingPinch(event: PinchEvent, timestamp: Date) {
         pinchCount += 1
+        uiRefreshTrigger += 1  // Force UI refresh on watchOS
         lastDetectionTime = timestamp
 
         // Check for milestones
@@ -627,7 +648,7 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
             manual: false
         )
 
-        print("🎯 Streaming pinch detected! Count: \(pinchCount), Confidence: \(String(format: "%.2f", event.confidence)), NCC: \(String(format: "%.2f", event.ncc))")
+        print("🔢 Streaming pinch detected! Count: \(pinchCount), Confidence: \(String(format: "%.2f", event.confidence)), NCC: \(String(format: "%.2f", event.ncc))")
     }
 
     /// Reset streaming detector state
@@ -638,6 +659,64 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
     /// Get streaming detector statistics for debugging
     public func getStreamingDetectorStats() -> StreamingDetectorStats? {
         return streamingDetector?.stats
+    }
+
+    /// Generate WatchDetectorMetadata for transfer to iPhone
+    public func generateDetectorMetadata() -> WatchDetectorMetadata? {
+        // If config wasn't set (shouldn't happen), build it now as fallback
+        let config: PinchConfig
+        if let existingConfig = currentPinchConfig {
+            config = existingConfig
+            print("✅ generateDetectorMetadata: Using existing config with gateK=\(config.gateK)")
+        } else {
+            print("⚠️ generateDetectorMetadata: currentPinchConfig was nil, building fallback config")
+            config = WatchSessionManager.shared.buildPinchConfig()
+            // Note: We don't set currentPinchConfig here since we're just generating metadata
+        }
+
+        let stats = streamingDetector?.stats ?? StreamingDetectorStats()
+        let useTemplate = WatchSessionManager.shared.useTemplateValidation()
+        let settingsReceived = WatchSessionManager.shared.hasReceivedSettings()
+
+        // Calculate average confidence from NCC scores
+        let avgConfidence: Float = stats.nccScores.isEmpty ? 0 : stats.nccScores.reduce(0, +) / Float(stats.nccScores.count)
+
+        return WatchDetectorMetadata(
+            configSource: configSource,
+            settingsReceivedFromPhone: settingsReceived,
+            fs: config.fs,
+            bandpassLow: config.bandpassLow,
+            bandpassHigh: config.bandpassHigh,
+            accelWeight: config.accelWeight,
+            gyroWeight: config.gyroWeight,
+            madWinSec: config.madWinSec,
+            gateK: config.gateK,
+            refractoryMs: config.refractoryMs,
+            minWidthMs: config.minWidthMs,
+            maxWidthMs: config.maxWidthMs,
+            nccThresh: config.nccThresh,
+            windowPreMs: config.windowPreMs,
+            windowPostMs: config.windowPostMs,
+            ignoreStartMs: config.ignoreStartMs,
+            ignoreEndMs: config.ignoreEndMs,
+            gateRampMs: config.gateRampMs,
+            gyroVetoThresh: config.gyroVetoThresh,
+            gyroVetoHoldMs: config.gyroVetoHoldMs,
+            amplitudeSurplusThresh: config.amplitudeSurplusThresh,
+            preQuietMs: config.preQuietMs,
+            isiThresholdMs: config.isiThresholdMs,
+            useTemplateValidation: useTemplate,
+            totalPinchesDetected: stats.successfulEvents,
+            candidatesRejectedByTemplate: stats.templateMatchFailures,
+            candidatesRejectedByGyroVeto: stats.gyroVetoRejections,
+            candidatesRejectedByAmplitude: stats.amplitudeSurplusRejections,
+            candidatesRejectedByISI: stats.isiRejections,
+            totalCandidatesEvaluated: stats.peakCandidates,
+            avgGateScore: stats.avgSigma,
+            avgNCC: stats.avgNCC,
+            avgConfidence: avgConfidence,
+            sessionDurationSeconds: Float(sessionDuration)
+        )
     }
 
     private func variance(_ values: [Double]) -> Double {
@@ -714,6 +793,9 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
     // MARK: - Data Transfer to iPhone
     
     private func transferSessionDataToPhone(sessionId: UUID, completion: @escaping (Bool) -> Void) {
+        // First, generate metadata on main actor (it accesses @MainActor properties)
+        let detectorMetadata = self.generateDetectorMetadata()
+
         dataLogQueue.async { [weak self] in
             guard let self = self else { return }
             guard !self.sensorDataLog.isEmpty else {
@@ -721,27 +803,28 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
                 completion(false)
                 return
             }
-            
+
             // Create safe copies of data on background queue
             let sensorDataCopy = Array(self.sensorDataLog)
             let detectionEventsCopy = Array(self.detectionEventLog)
             let motionInterruptionsCopy = Array(self.motionInterruptionLog)
-            
+
             DispatchQueue.main.async {
                 Task { @MainActor in
                     self.sessionManager.transferSensorData(
                         sensorData: sensorDataCopy,
                         detectionEvents: detectionEventsCopy,
                         motionInterruptions: motionInterruptionsCopy,
+                        detectorMetadata: detectorMetadata,
                         sessionId: sessionId
                     )
-                    
+
                     // For now, assume transfer is successful since transferSensorData doesn't provide completion callback
                     // TODO: Enhance WatchSessionManager to provide completion callback
                     completion(true)
                 }
-                
-                print("Initiated data transfer for session \(sessionId)")
+
+                print("Initiated data transfer for session \(sessionId), hasMetadata: \(detectorMetadata != nil)")
             }
         }
     }
@@ -776,8 +859,8 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
     }
     
     // Export function for companion app
-    func exportSessionData() -> (sensorData: [SensorReading], detectionEvents: [DetectionEvent], motionInterruptions: [MotionInterruption]) {
-        return (sensorDataLog, detectionEventLog, motionInterruptionLog)
+    func exportSessionData() -> (sensorData: [SensorReading], detectionEvents: [DetectionEvent], motionInterruptions: [MotionInterruption], detectorMetadata: WatchDetectorMetadata?) {
+        return (sensorDataLog, detectionEventLog, motionInterruptionLog, generateDetectorMetadata())
     }
     
     // Export sensor data as CSV string (compatible with guide format)
