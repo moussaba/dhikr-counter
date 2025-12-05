@@ -1134,6 +1134,19 @@ struct SettingsView: View {
                 Section("Help") {
                     SettingsHelpCard()
                 }
+
+                Section("Templates") {
+                    NavigationLink(destination: SavedTemplatesView()) {
+                        HStack {
+                            Image(systemName: "wand.and.stars")
+                                .foregroundColor(.purple)
+                            Text("Saved Templates")
+                            Spacer()
+                            Text("\(TemplateTrainingManager.shared.trainedTemplateSets.count)")
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
             }
             .navigationTitle("Settings")
         }

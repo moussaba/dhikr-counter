@@ -362,7 +362,38 @@ class PhoneSessionManager: NSObject, ObservableObject {
     func syncAllSettingsToWatch() {
         syncSettingsToWatch()
     }
-    
+
+    /// Send trained templates to Watch via file transfer
+    func sendTrainedTemplates(_ templates: [String: Any]) {
+        let session = WCSession.default
+
+        guard session.activationState == .activated else {
+            addDebugMessage("Cannot send templates: WCSession not activated")
+            return
+        }
+
+        guard session.isPaired else {
+            addDebugMessage("Cannot send templates: Watch not paired")
+            return
+        }
+
+        // Save templates to a temporary file
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("trained_templates_sync.json")
+
+        do {
+            let data = try JSONSerialization.data(withJSONObject: templates, options: .prettyPrinted)
+            try data.write(to: tempURL)
+
+            // Transfer file to Watch
+            session.transferFile(tempURL, metadata: ["type": "trained_templates"])
+            addDebugMessage("Trained templates sent to Watch (\(templates["templates"] as? [[Any]] ?? []).count templates)")
+            print("📤 Sent trained templates to Watch")
+        } catch {
+            addDebugMessage("Failed to send templates: \(error.localizedDescription)")
+            print("❌ Failed to send templates: \(error)")
+        }
+    }
+
     private func setupWatchConnectivity() {
         guard WCSession.isSupported() else {
             addDebugMessage("WatchConnectivity NOT supported on this device")

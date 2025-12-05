@@ -429,7 +429,8 @@ struct SessionDetailView: View {
     @StateObject private var detectionState = TKEODetectionState()
     @State private var showingExportSheet = false
     @State private var showingTKEOExportSheet = false
-    
+    @State private var showingTemplateTraining = false
+
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
@@ -441,38 +442,51 @@ struct SessionDetailView: View {
 
                 // Validation data
                 ValidationDataCard(session: session)
-                
+
                 // TKEO Analysis and Detection
                 if let sensorData = dataManager.getSensorData(for: session.id.uuidString) {
                     TKEOAnalysisPlotView(
-                        sensorData: sensorData, 
-                        session: session, 
+                        sensorData: sensorData,
+                        session: session,
                         detectedEvents: detectionState.detectedEvents
                     )
-                    
+
                     // TKEO Detection section (now minimal, runs automatically)
                     TKEODetectionCard(sessionId: session.id.uuidString, detectionState: detectionState)
-                    
-                    // TKEO Analysis Export button
-                    Button(action: { showingTKEOExportSheet = true }) {
-                        HStack {
-                            Image(systemName: "chart.line.uptrend.xyaxis")
-                            Text("Export Analysis")
+
+                    // Action buttons
+                    VStack(spacing: 12) {
+                        // Template Training button
+                        NavigationLink(destination: TemplateTrainingView(session: session, sensorData: sensorData)) {
+                            HStack {
+                                Image(systemName: "wand.and.stars")
+                                Text("Train Templates")
+                            }
+                            .frame(maxWidth: .infinity)
                         }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                    .padding(.horizontal)
-                    
-                    // Export button
-                    Button(action: { showingExportSheet = true }) {
-                        HStack {
-                            Image(systemName: "square.and.arrow.up")
-                            Text("Export Session Data")
+                        .buttonStyle(.bordered)
+                        .tint(.purple)
+
+                        // TKEO Analysis Export button
+                        Button(action: { showingTKEOExportSheet = true }) {
+                            HStack {
+                                Image(systemName: "chart.line.uptrend.xyaxis")
+                                Text("Export Analysis")
+                            }
+                            .frame(maxWidth: .infinity)
                         }
-                        .frame(maxWidth: .infinity)
+                        .buttonStyle(.bordered)
+
+                        // Export button
+                        Button(action: { showingExportSheet = true }) {
+                            HStack {
+                                Image(systemName: "square.and.arrow.up")
+                                Text("Export Session Data")
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
                     }
-                    .buttonStyle(.borderedProminent)
                     .padding(.horizontal)
                 }
             }

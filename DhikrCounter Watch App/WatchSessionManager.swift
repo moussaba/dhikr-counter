@@ -44,6 +44,10 @@ class WatchSessionManager: NSObject, ObservableObject {
     private(set) var tkeoSettings: [String: Any] = [:]
     private var previousSettings: [String: Any] = [:]
 
+    // Trained Templates (synced from iPhone)
+    @Published var trainedTemplatesReceived: Bool = false
+    @Published var trainedTemplateCount: Int = 0
+
     // Thread-safe cached copies for access from non-MainActor contexts
     // These are nonisolated(unsafe) because they are protected by settingsLock
     nonisolated(unsafe) private let settingsLock = NSLock()
@@ -372,7 +376,38 @@ extension WatchSessionManager: @preconcurrency WCSessionDelegate {
     func session(_ session: WCSession, didReceiveMessage message: [String : Any], replyHandler: @escaping ([String : Any]) -> Void) {
         replyHandler(["status": "received"])
     }
-    
+
+    /// Handle file transfers from iPhone (e.g., trained templates)
+    nonisolated func session(_ session: WCSession, didReceive file: WCSessionFile) {
+        print("📥 Received file from iPhone: \(file.fileURL.lastPathComponent)")
+
+        // Check if this is a trained templates file
+        if file.metadata?["type"] as? String == "trained_templates" {
+            // Read file immediately before WatchConnectivity cleans it up
+            do {
+                let data = try Data(contentsOf: file.fileURL)
+                if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let templates = json["templates"] as? [[Double]] {
+                    print("📥 Received \(templates.count) trained templates from iPhone")
+
+                    // Save to Watch's documents directory
+                    let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+                    let templatesURL = documentsPath.appendingPathComponent("trained_templates.json")
+                    try data.write(to: templatesURL)
+                    print("✅ Saved trained templates to: \(templatesURL.path)")
+
+                    DispatchQueue.main.async {
+                        self.trainedTemplatesReceived = true
+                        self.trainedTemplateCount = templates.count
+                        self.triggerSyncFlash()
+                    }
+                }
+            } catch {
+                print("❌ Failed to process trained templates: \(error)")
+            }
+        }
+    }
+
     nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String : Any]) {
         print("📱 didReceiveApplicationContext called with \(applicationContext.count) keys")
         DispatchQueue.main.async {

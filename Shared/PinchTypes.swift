@@ -156,9 +156,16 @@ public struct PinchTemplate {
         self.version = version
     }
 
-    /// Load trained templates from bundle
+    /// Load trained templates - checks user Documents first, then bundle
     /// Returns array of trained templates, or falls back to default Gaussian if loading fails
     public static func loadTrainedTemplates(fs: Float = 50.0) -> [PinchTemplate] {
+        // First, try loading user-trained templates from Documents directory
+        if let userTemplates = loadUserTrainedTemplates(fs: fs) {
+            print("✅ Using user-trained templates (\(userTemplates.count) templates)")
+            return userTemplates
+        }
+
+        // Fall back to bundle templates
         guard let path = Bundle.main.path(forResource: "trained_templates", ofType: "json"),
               let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
               let json = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
@@ -167,6 +174,27 @@ public struct PinchTemplate {
             return [createDefault(fs: fs)]
         }
 
+        return parseTemplatesArray(templatesArray, fs: fs, source: "bundle")
+    }
+
+    /// Load user-trained templates from Documents directory (synced from iPhone)
+    public static func loadUserTrainedTemplates(fs: Float = 50.0) -> [PinchTemplate]? {
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let templatesURL = documentsPath.appendingPathComponent("trained_templates.json")
+
+        guard FileManager.default.fileExists(atPath: templatesURL.path),
+              let data = try? Data(contentsOf: templatesURL),
+              let json = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
+              let templatesArray = json["templates"] as? [[Double]] else {
+            return nil
+        }
+
+        print("📱 Found user-trained templates at: \(templatesURL.path)")
+        return parseTemplatesArray(templatesArray, fs: fs, source: "user_trained")
+    }
+
+    /// Parse templates array into PinchTemplate objects
+    private static func parseTemplatesArray(_ templatesArray: [[Double]], fs: Float, source: String) -> [PinchTemplate] {
         // Calculate correct pre/post timing from actual template length
         let templateLength = templatesArray.first?.count ?? 16
         // Template length = preS + postS + 1, so: preS + postS = templateLength - 1
@@ -176,7 +204,7 @@ public struct PinchTemplate {
         let preMs = Float(preS) / fs * 1000
         let postMs = Float(postS) / fs * 1000
 
-        print("✅ Loaded \(templatesArray.count) trained templates from JSON")
+        print("✅ Loaded \(templatesArray.count) templates from \(source)")
         print("📏 Template timing: \(templateLength) samples = \(String(format: "%.0f", preMs + postMs))ms total (\(String(format: "%.0f", preMs))ms + \(String(format: "%.0f", postMs))ms)")
 
         return templatesArray.enumerated().map { (index, templateDoubles) in
@@ -188,7 +216,7 @@ public struct PinchTemplate {
                 vectorLength: templateData.count,
                 data: templateData,
                 channelsMeta: "fused_signal_template_\(index + 1)",
-                version: "trained_v1"
+                version: "\(source)_v1"
             )
         }
     }
