@@ -1,162 +1,163 @@
-# Current State: Template Training UI Implementation
+# Current State: Audio-Based Pinch Detection Prototype
 
-**Date**: 2025-11-26
-**Branch**: `phase4-watch-deployment`
-**Last Commit**: `5b510ed` - "Update CURRENT_STATE.md with Phase 4 completion status"
+**Date**: 2025-12-05
+**Branch**: `issue-48-audio-pinch-detection`
+**Last Commit**: `f8478e4` - "Add audio-based pinch detection prototype (Issue #48)"
 
 ## Project Context
-DhikrCounter app for Islamic prayer counting via pinch detection on Apple Watch. Phase 4 (streaming pinch detection on Watch) is complete. Currently implementing **User-Assisted Template Training** (Option 4) to allow users to label pinch peaks in recorded sessions and create personalized templates.
 
-## Current Work: Template Training UI
+DhikrCounter app for Islamic prayer counting via pinch detection on Apple Watch. Phase 4 (streaming pinch detection on Watch) is complete. Template Training UI is paused (committed in `aee5842`).
+
+Currently working on **Issue #48: Audio-based pinch detection** - using Watch microphone to detect click sounds from finger rings/covers.
+
+## Current Work: Audio Detection Prototype
 
 ### What Was Implemented
 
 | File | Status | Description |
 |------|--------|-------------|
-| `DhikrCounter/TemplateTrainingView.swift` | ✅ NEW | Full-screen peak labeling UI (~1000 lines) |
-| `DhikrCounter/DataVisualizationView.swift` | ✅ MODIFIED | Added "Train Templates" button |
-| `DhikrCounter/CompanionContentView.swift` | ✅ MODIFIED | Added "Saved Templates" navigation link |
-| `DhikrCounter/PhoneSessionManager.swift` | ✅ MODIFIED | Added `sendTrainedTemplates()` for Watch sync |
-| `DhikrCounter Watch App/WatchSessionManager.swift` | ✅ MODIFIED | Added file receive handler for templates |
-| `Shared/PinchTypes.swift` | ✅ MODIFIED | Loads user templates first before bundle defaults |
+| `DhikrCounter Watch App/AudioPinchDetector.swift` | ✅ NEW | AVAudioEngine-based audio capture + onset detection |
+| `DhikrCounter Watch App/AudioTestView.swift` | ✅ NEW | Test UI with level meters and controls |
+| `DhikrCounter Watch App/Info.plist` | ✅ MODIFIED | Added NSMicrophoneUsageDescription |
+| `DhikrCounter Watch App/ContentView.swift` | ✅ MODIFIED | Added "Audio Detection Test" link in Settings |
 
-### Key Components in TemplateTrainingView.swift
+### AudioPinchDetector Features
 
 ```swift
-// Data structures
-struct LabeledPeak: Identifiable, Codable {
-    let id: UUID
-    let timestamp: TimeInterval
-    let peakIndex: Int
-    var isConfirmed: Bool
-    let positionContext: String?
-}
+@MainActor
+class AudioPinchDetector: ObservableObject {
+    // Published state
+    @Published var isListening = false
+    @Published var currentRMSdB: Float = -60.0
+    @Published var baselineRMSdB: Float = -60.0
+    @Published var onsetCount: Int = 0
 
-struct TrainedTemplateSet: Identifiable, Codable {
-    let id: UUID
-    let sourceSessionId: String
-    let createdDate: Date
-    let positionContext: String
-    let templateCount: Int
-    let templates: [[Float]]
-    let amplitudeSurplusThresholds: [Float]
-}
+    // Configurable parameters
+    var onsetThresholdDb: Float = 15.0      // dB above baseline to trigger
+    var refractoryPeriod: TimeInterval = 0.25  // Min time between detections
+    var baselineAlpha: Float = 0.01         // Baseline smoothing factor
 
-// Main manager singleton
-class TemplateTrainingManager: ObservableObject {
-    static let shared = TemplateTrainingManager()
-    @Published var labeledPeaks: [LabeledPeak] = []
-    @Published var trainedTemplateSets: [TrainedTemplateSet] = []
+    // Methods
+    func requestPermission() async -> Bool
+    func startListening()
+    func stopListening()
+    func reset()
 
-    func extractTemplates(from sensorData: [SensorReading], sessionId: String, userMarks: [LabeledPeak], fs: Float = 50.0) -> TrainedTemplateSet?
-    func syncToWatch()
-    func exportForWatch() -> Data?
+    // Callback
+    var onOnsetDetected: ((Date, Float) -> Void)?
 }
 ```
 
-### UI Features
+### Detection Algorithm
 
-1. **Full-Screen Peak Labeler** (`FullScreenPeakLabeler`)
-   - Pinch-to-zoom (1x to 30x)
-   - Two-finger pan when zoomed
-   - Fixed Y-axis scale for consistent comparison
-   - Threshold slider to filter noise (percentile-based)
-   - Auto-detected peaks shown as gray diamonds
-   - User-confirmed peaks shown as green circles with timestamps
+1. **Audio Capture**: AVAudioEngine input tap at 48kHz, 1024-sample buffers (~21ms)
+2. **RMS Energy**: Computed via vDSP_rmsqv, converted to dB
+3. **Adaptive Baseline**: Exponential smoothing of RMS levels
+4. **Onset Detection**: Trigger when `currentRMS > baseline + threshold`
+5. **Refractory Period**: Prevent double-triggers (default 250ms)
 
-2. **Tap Gesture Handling** (uses `ChartProxy` for accurate coordinates)
-   - Tap gray diamond → Confirm auto-detected peak
-   - Tap green circle → Remove confirmed peak
-   - Tap elsewhere above threshold → Add new mark (snaps to local maximum)
+### AudioTestView UI
 
-3. **Template Extraction**
-   - Extracts 25-sample windows around marked peaks
-   - Z-normalizes templates
-   - Computes amplitude surplus thresholds
-   - Requires minimum 3 valid marks
+- Level meter showing current vs baseline audio
+- Threshold marker (orange line)
+- Click counter (large green number)
+- Start/Stop/Reset controls
+- Settings panel for threshold and refractory tuning
 
-4. **Watch Sync**
-   - Templates saved to `trained_templates.json`
-   - Transferred via WatchConnectivity `transferFile()`
-   - Watch loads user templates before bundle defaults
+### How to Test
 
-### Bug Fixed This Session
+1. Build and deploy to **real Apple Watch** (simulator has no microphone)
+2. On Watch: Swipe down to Settings tab
+3. Tap "Audio Detection Test" (purple waveform icon)
+4. Grant microphone permission when prompted
+5. Tap "Start" to begin listening
+6. Click finger rings together - watch counter increment
 
-**Tap Offset Bug**: User had to tap to the RIGHT of peaks to select them.
+## Recent Bug Fixes
 
-**Root Cause**: The tap coordinate transformation used `location.x / chartWidth` which didn't account for Y-axis label space.
+### Issue #47: Watch statistics disappears after saving session notes (MERGED)
 
-**Fix**: Used SwiftUI Charts' `ChartProxy.value(atX:)` method which properly converts screen coordinates to data values:
+**Problem**: `watchDetectorMetadata` was lost when updating session notes
 
-```swift
-// OLD (incorrect)
-let tapRatio = location.x / chartWidth
-let tappedIndex = visibleStartIndex + Int(CGFloat(visibleSamples) * tapRatio)
+**Fix**: `updateSessionNotes()` and `updateActualPinchCount()` now load full session data from disk before re-saving, preserving all fields.
 
-// NEW (correct)
-.chartOverlay { proxy in
-    GeometryReader { geometry in
-        Rectangle()
-            .fill(Color.clear)
-            .contentShape(Rectangle())
-            .onTapGesture { location in
-                guard let tappedXValue: Int = proxy.value(atX: location.x) else { return }
-                // tappedXValue is now the correct sample index
-            }
-    }
-}
-```
+**PR**: #50 (merged to main)
 
-### Build Status
-- ✅ iOS target compiles successfully (iPhone 16 Pro simulator)
+## Paused Work: Template Training UI
 
-## Phase 4 Summary (Completed Previously)
+Committed in `aee5842` on branch `phase4-watch-deployment` (merged to main).
 
-- StreamingPinchDetector deployed to Apple Watch
-- Single-sample processing API
-- Causal filtering, TKEO, L2 sensor fusion
-- Template validation with NCC
-- Quality gates: amplitude surplus, ISI, gyro veto
-- Pending hardware validation on real Watch
+**Status**: Tap offset bug fixed but feature needs further testing.
 
-## Testing Configuration
+**Resume**: The template training UI allows users to mark pinch peaks in recorded sessions and create personalized templates. See previous CURRENT_STATE.md for details.
 
-**iPhone Simulator**: iPhone 16 Pro Max (has existing session data)
-**Watch Hardware**: Real Apple Watch for hardware testing
+## Branch Status
+
+| Branch | Status | Description |
+|--------|--------|-------------|
+| `main` | Up to date | Contains Issue #47 fix and template training WIP |
+| `issue-48-audio-pinch-detection` | Active | Audio detection prototype (ready for testing) |
+| `phase4-watch-deployment` | Merged | Template training UI (paused) |
+
+## Open Issues
+
+| # | Title | Status |
+|---|-------|--------|
+| #48 | Investigate sound addition | In progress (prototype ready) |
+| #49 | Verify event inter arrival time | Open |
+| #46 | Auto Reset count | Open |
+| #47 | Watch statistics disappears | ✅ Fixed (PR #50) |
 
 ## Quick Resume Commands
 
 ```bash
-# Check current branch and status
+# Check current state
 git branch
 git status
+git log --oneline -5
+
+# Switch to audio detection branch
+git checkout issue-48-audio-pinch-detection
+
+# Build Watch app (use Series 11 simulator or real Watch)
+xcodebuild -scheme "DhikrCounter Watch App" -configuration Debug \
+  -destination "platform=watchOS Simulator,name=Apple Watch Series 11 (46mm)" build
 
 # Build iOS app
 xcodebuild -scheme "DhikrCounter" -configuration Debug \
-  -destination "platform=iOS Simulator,name=iPhone 16 Pro" build
-
-# Build Watch app
-xcodebuild -scheme "DhikrCounter Watch App" -configuration Debug \
-  -destination "platform=watchOS Simulator,name=Apple Watch Series 10 (46mm)" build
+  -destination "platform=iOS Simulator,name=iPhone 17 Pro Max" build
 ```
 
 ## Next Steps
 
-1. **Test Template Training UI** - Verify tap accuracy after the fix
-2. **Train Templates** - Use the UI to mark peaks in a recorded session
-3. **Sync to Watch** - Transfer trained templates via WatchConnectivity
-4. **Validate Detection** - Test if personalized templates improve detection accuracy
-5. **Git Commit** - Commit template training implementation when complete
+1. **Test on real Watch** - Deploy to Apple Watch and test with finger rings
+2. **Tune threshold** - Adjust based on actual ring click loudness
+3. **Compare with motion** - Run sessions with both detection methods
+4. **Decide on hybrid** - Consider combining audio + motion for better accuracy
+5. **Create PR** - Once testing is satisfactory
 
-## Files Modified (Uncommitted)
+## Technical Notes
 
-- `DhikrCounter/TemplateTrainingView.swift` - Tap offset bug fix
-- `CURRENT_STATE.md` - This file
+### watchOS Audio Constraints
+- Sample rate fixed at 48kHz (cannot change)
+- Must disconnect inputNode from mainMixerNode to avoid feedback
+- Use AVAudioEngine tap, not AudioUnit/AURenderCallback
+- Permission via NSMicrophoneUsageDescription in Info.plist
 
-## Notes
+### Simulator Limitations
+- watchOS Simulator has no real microphone
+- Must test on physical Apple Watch for audio detection
+- Motion detection works in simulator
 
-- User selected Option 4 (User-Assisted Labeling) for template training
-- Full-screen landscape view preferred for dense signal data
-- Threshold filter helps reduce noise before marking
-- Auto-detected peaks provide reference points to reduce manual marking
-- Templates use Z-normalization for scale invariance
+## Files Structure
+
+```
+DhikrCounter Watch App/
+├── AudioPinchDetector.swift    # NEW - Audio capture + onset detection
+├── AudioTestView.swift         # NEW - Test UI for audio detection
+├── ContentView.swift           # MODIFIED - Added audio test link
+├── Info.plist                  # MODIFIED - Microphone permission
+├── DhikrDetectionEngine.swift  # Existing motion detection
+├── StreamingPinchDetector.swift # Existing streaming DSP
+└── WatchSessionManager.swift   # Watch-iPhone communication
+```
