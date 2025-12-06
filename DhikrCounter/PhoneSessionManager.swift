@@ -123,7 +123,7 @@ class PhoneSessionManager: NSObject, ObservableObject {
     
     func updateActualPinchCount(for sessionId: String, actualPinchCount: Int?) {
         addDebugMessage("📝 Updating actual pinch count for session \(sessionId.prefix(8)): \(actualPinchCount?.description ?? "nil")")
-        
+
         // First, find and update the session in the receivedSessions array
         if let index = receivedSessions.firstIndex(where: { $0.id.uuidString == sessionId }) {
             let currentSession = receivedSessions[index]
@@ -139,14 +139,21 @@ class PhoneSessionManager: NSObject, ObservableObject {
                 actualPinchCount: actualPinchCount
             )
             receivedSessions[index] = updatedSession
-            
-            // Load sensor data and detection events if available
-            let sensorData = getSensorData(for: sessionId) ?? []
-            let detectionEvents = getDetectionEvents(for: sessionId) ?? []
-            
-            // Save the updated session to disk
-            saveSession(updatedSession, sensorData: sensorData, detectionEvents: detectionEvents)
-            
+
+            // Load full session data from disk to preserve all fields
+            let fileName = "session_\(sessionId).json"
+            let fileURL = sessionsDirectory.appendingPathComponent(fileName)
+            let persistedData = loadPersistedSessionData(from: fileURL)
+
+            // Use data from disk if available, fall back to in-memory cache
+            let sensorData = persistedData?.sensorData ?? getSensorData(for: sessionId) ?? []
+            let detectionEvents = persistedData?.detectionEvents ?? getDetectionEvents(for: sessionId) ?? []
+            let motionInterruptions = persistedData?.motionInterruptions ?? []
+            let watchDetectorMetadata = persistedData?.watchDetectorMetadata
+
+            // Save the updated session to disk, preserving all original data
+            saveSession(updatedSession, sensorData: sensorData, detectionEvents: detectionEvents, motionInterruptions: motionInterruptions, watchDetectorMetadata: watchDetectorMetadata)
+
             addDebugMessage("✅ Successfully updated actual pinch count for session \(sessionId.prefix(8))")
         } else {
             addDebugMessage("⚠️ Session not found: \(sessionId.prefix(8))")
@@ -155,7 +162,7 @@ class PhoneSessionManager: NSObject, ObservableObject {
     
     func updateSessionNotes(sessionId: String, notes: String?) {
         addDebugMessage("📝 Updating notes for session \(sessionId.prefix(8)): '\(notes?.prefix(50) ?? "nil")'")
-        
+
         // First, find and update the session in the receivedSessions array
         if let index = receivedSessions.firstIndex(where: { $0.id.uuidString == sessionId }) {
             let currentSession = receivedSessions[index]
@@ -171,14 +178,21 @@ class PhoneSessionManager: NSObject, ObservableObject {
                 actualPinchCount: currentSession.actualPinchCount
             )
             receivedSessions[index] = updatedSession
-            
-            // Load sensor data and detection events if available
-            let sensorData = getSensorData(for: sessionId) ?? []
-            let detectionEvents = getDetectionEvents(for: sessionId) ?? []
-            
-            // Save the updated session to disk
-            saveSession(updatedSession, sensorData: sensorData, detectionEvents: detectionEvents)
-            
+
+            // Load full session data from disk to preserve all fields
+            let fileName = "session_\(sessionId).json"
+            let fileURL = sessionsDirectory.appendingPathComponent(fileName)
+            let persistedData = loadPersistedSessionData(from: fileURL)
+
+            // Use data from disk if available, fall back to in-memory cache
+            let sensorData = persistedData?.sensorData ?? getSensorData(for: sessionId) ?? []
+            let detectionEvents = persistedData?.detectionEvents ?? getDetectionEvents(for: sessionId) ?? []
+            let motionInterruptions = persistedData?.motionInterruptions ?? []
+            let watchDetectorMetadata = persistedData?.watchDetectorMetadata
+
+            // Save the updated session to disk, preserving all original data
+            saveSession(updatedSession, sensorData: sensorData, detectionEvents: detectionEvents, motionInterruptions: motionInterruptions, watchDetectorMetadata: watchDetectorMetadata)
+
             addDebugMessage("✅ Successfully updated notes for session \(sessionId.prefix(8))")
         } else {
             addDebugMessage("⚠️ Session not found: \(sessionId.prefix(8))")
