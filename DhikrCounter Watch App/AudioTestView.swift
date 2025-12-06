@@ -4,8 +4,9 @@ import SwiftUI
 /// Use this to experiment with microphone-based click detection
 struct AudioTestView: View {
     @StateObject private var audioDetector = AudioPinchDetector()
+    @ObservedObject private var sessionManager = WatchSessionManager.shared
     @State private var permissionGranted = false
-    @State private var showingSettings = false
+    @State private var showingSettings = true  // Show settings by default for tuning
 
     var body: some View {
         ScrollView {
@@ -34,6 +35,23 @@ struct AudioTestView: View {
         .navigationTitle("Audio Test")
         .task {
             permissionGranted = await audioDetector.requestPermission()
+            loadSettingsFromPhone()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .tkeoSettingsUpdated)) { _ in
+            loadSettingsFromPhone()
+        }
+    }
+
+    /// Load audio settings synced from iPhone
+    private func loadSettingsFromPhone() {
+        if let threshold = sessionManager.getSetting("audio_thresholdDb") as? Double {
+            audioDetector.onsetThresholdDb = Float(threshold)
+        }
+        if let refractory = sessionManager.getSetting("audio_refractoryMs") as? Double {
+            audioDetector.refractoryPeriod = refractory / 1000.0
+        }
+        if let alpha = sessionManager.getSetting("audio_baselineAlpha") as? Double {
+            audioDetector.baselineAlpha = Float(alpha)
         }
     }
 
@@ -54,8 +72,9 @@ struct AudioTestView: View {
             Button {
                 showingSettings.toggle()
             } label: {
-                Image(systemName: "gear")
-                    .font(.caption)
+                Image(systemName: showingSettings ? "gear.circle.fill" : "gear.circle")
+                    .font(.title3)
+                    .foregroundColor(.blue)
             }
             .buttonStyle(.plain)
         }
@@ -86,12 +105,22 @@ struct AudioTestView: View {
 
     private var levelMetersSection: some View {
         VStack(spacing: 8) {
-            // Current level
+            // HPF mode indicator
+            HStack {
+                Image(systemName: audioDetector.useHighPassFilter ? "waveform.path.ecg" : "waveform")
+                    .foregroundColor(audioDetector.useHighPassFilter ? .cyan : .gray)
+                Text(audioDetector.useHighPassFilter ? "HPF+Peak" : "Raw RMS")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(audioDetector.useHighPassFilter ? .cyan : .gray)
+                Spacer()
+            }
+
+            // Current level - use wider range with HPF (baseline drops to ~-85dB)
             LevelMeter(
-                label: "Level",
+                label: audioDetector.useHighPassFilter ? "Peak" : "Level",
                 valueDb: audioDetector.currentRMSdB,
-                minDb: -60,
-                maxDb: 0,
+                minDb: audioDetector.useHighPassFilter ? -100 : -60,
+                maxDb: audioDetector.useHighPassFilter ? -20 : 0,
                 thresholdDb: audioDetector.baselineRMSdB + audioDetector.onsetThresholdDb
             )
 
@@ -102,10 +131,11 @@ struct AudioTestView: View {
                     .foregroundColor(.secondary)
                 Text(String(format: "%.0f dB", audioDetector.baselineRMSdB))
                     .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(audioDetector.baselineRMSdB < -80 ? .cyan : .primary)
 
                 Spacer()
 
-                Text("Threshold:")
+                Text("Thresh:")
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
                 Text(String(format: "+%.0f dB", audioDetector.onsetThresholdDb))
@@ -178,11 +208,37 @@ struct AudioTestView: View {
                 .font(.caption)
                 .fontWeight(.semibold)
 
-            // Threshold slider
+            // HPF Toggle - NEW!
+            Toggle(isOn: $audioDetector.useHighPassFilter) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("High-Pass Filter")
+                        .font(.system(size: 10, weight: .medium))
+                    Text("Isolates click frequencies (3kHz+)")
+                        .font(.system(size: 8))
+                        .foregroundColor(.secondary)
+                }
+            }
+            .toggleStyle(.switch)
+
+            // Threshold slider - above baseline to trigger
             VStack(alignment: .leading, spacing: 2) {
-                Text("Onset Threshold: \(Int(audioDetector.onsetThresholdDb)) dB")
+                Text("Threshold: +\(Int(audioDetector.onsetThresholdDb)) dB above baseline")
                     .font(.system(size: 10))
-                Slider(value: $audioDetector.onsetThresholdDb, in: 5...30, step: 1)
+                Slider(value: $audioDetector.onsetThresholdDb, in: 2...20, step: 1)
+            }
+
+            // Jump threshold slider - Minimum sudden jump to trigger
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Min Jump: \(Int(audioDetector.minJumpDb)) dB (higher=stricter)")
+                    .font(.system(size: 10))
+                Slider(value: $audioDetector.minJumpDb, in: 5...25, step: 1)
+            }
+
+            // Max spike slider - Filter out loud ambient noise
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Max Spike: \(Int(audioDetector.maxSpikeDb)) dB (reject louder)")
+                    .font(.system(size: 10))
+                Slider(value: $audioDetector.maxSpikeDb, in: 20...50, step: 1)
             }
 
             // Refractory period

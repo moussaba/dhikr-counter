@@ -2,124 +2,88 @@
 
 **Date**: 2025-12-05
 **Branch**: `issue-48-audio-pinch-detection`
-**Last Commit**: `f8478e4` - "Add audio-based pinch detection prototype (Issue #48)"
+**Status**: Testing audio sensitivity - ring clicks are hard to detect
 
-## Project Context
+## Problem Being Solved
 
-DhikrCounter app for Islamic prayer counting via pinch detection on Apple Watch. Phase 4 (streaming pinch detection on Watch) is complete. Template Training UI is paused (committed in `aee5842`).
+Apple Watch microphone has low sensitivity for detecting subtle finger ring clicks:
+- Baseline hovers around -68 dB
+- Ring clicks barely register above baseline
+- Tapping ring on table works, but finger-to-finger clicks don't
 
-Currently working on **Issue #48: Audio-based pinch detection** - using Watch microphone to detect click sounds from finger rings/covers.
+## Current Detection Approach (Dual Method)
 
-## Current Work: Audio Detection Prototype
+The AudioPinchDetector now uses TWO detection methods:
 
-### What Was Implemented
+1. **Threshold Method**: Signal > baseline + threshold
+2. **Jump Method (NEW)**: Sudden jump of 2+ dB from previous buffer
 
-| File | Status | Description |
-|------|--------|-------------|
-| `DhikrCounter Watch App/AudioPinchDetector.swift` | ✅ NEW | AVAudioEngine-based audio capture + onset detection |
-| `DhikrCounter Watch App/AudioTestView.swift` | ✅ NEW | Test UI with level meters and controls |
-| `DhikrCounter Watch App/Info.plist` | ✅ MODIFIED | Added NSMicrophoneUsageDescription |
-| `DhikrCounter Watch App/ContentView.swift` | ✅ MODIFIED | Added "Audio Detection Test" link in Settings |
+Either method triggers detection (OR logic).
 
-### AudioPinchDetector Features
+## Key Parameters (Current Defaults)
 
-```swift
-@MainActor
-class AudioPinchDetector: ObservableObject {
-    // Published state
-    @Published var isListening = false
-    @Published var currentRMSdB: Float = -60.0
-    @Published var baselineRMSdB: Float = -60.0
-    @Published var onsetCount: Int = 0
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `onsetThresholdDb` | 1.5 dB | Above baseline to trigger |
+| `minJumpDb` | 2.0 dB | Minimum sudden jump to trigger |
+| `refractoryPeriod` | 250 ms | Min time between detections |
+| `baselineAlpha` | 0.03 | Baseline adaptation speed |
+| `bufferSize` | 512 samples | ~10ms at 48kHz (faster response) |
 
-    // Configurable parameters
-    var onsetThresholdDb: Float = 15.0      // dB above baseline to trigger
-    var refractoryPeriod: TimeInterval = 0.25  // Min time between detections
-    var baselineAlpha: Float = 0.01         // Baseline smoothing factor
+## Baseline Adaptation (Asymmetric)
 
-    // Methods
-    func requestPermission() async -> Bool
-    func startListening()
-    func stopListening()
-    func reset()
+| Signal Level | Baseline Behavior |
+|--------------|-------------------|
+| Below baseline | Adapts quickly (normal) |
+| 0-2 dB above | Adapts quickly (normal) |
+| 2 dB to threshold | Adapts slowly (1/10th speed) |
+| Above threshold | No adaptation (ignores spikes) |
 
-    // Callback
-    var onOnsetDetected: ((Date, Float) -> Void)?
-}
-```
+## Files Modified This Session
 
-### Detection Algorithm
+| File | Changes |
+|------|---------|
+| `DhikrCounter Watch App/AudioPinchDetector.swift` | Dual detection, asymmetric baseline, smaller buffer |
+| `DhikrCounter Watch App/AudioTestView.swift` | Loads settings from iPhone, shows settings by default |
+| `DhikrCounter Watch App/WatchSessionManager.swift` | Added `getSetting()` helper, logs audio settings |
+| `DhikrCounter Watch App/ContentView.swift` | Added Audio Detection Test link in Settings |
+| `DhikrCounter Watch App/Info.plist` | Added NSMicrophoneUsageDescription |
+| `DhikrCounter/CompanionContentView.swift` | Added Audio Detection settings section |
+| `DhikrCounter/PhoneSessionManager.swift` | Added audio settings to Watch sync |
 
-1. **Audio Capture**: AVAudioEngine input tap at 48kHz, 1024-sample buffers (~21ms)
-2. **RMS Energy**: Computed via vDSP_rmsqv, converted to dB
-3. **Adaptive Baseline**: Exponential smoothing of RMS levels
-4. **Onset Detection**: Trigger when `currentRMS > baseline + threshold`
-5. **Refractory Period**: Prevent double-triggers (default 250ms)
+## iOS Settings UI
 
-### AudioTestView UI
+In iPhone app → Settings → "Audio Detection (Experimental)":
+- Toggle to enable/disable
+- Onset Threshold slider: 0.5 to 10.0 dB
+- Refractory Period slider: 100 to 500 ms
+- Must tap "Sync Now" to send to Watch
 
-- Level meter showing current vs baseline audio
-- Threshold marker (orange line)
-- Click counter (large green number)
-- Start/Stop/Reset controls
-- Settings panel for threshold and refractory tuning
+## Debug Info
 
-### How to Test
+The Watch debug log shows detection method:
+- `ONSET #1 [JUMP]: +1.5dB (jump:3.2)` - Detected by sudden jump
+- `ONSET #2 [THRESH]: +2.1dB (jump:0.5)` - Detected by threshold
 
-1. Build and deploy to **real Apple Watch** (simulator has no microphone)
-2. On Watch: Swipe down to Settings tab
-3. Tap "Audio Detection Test" (purple waveform icon)
-4. Grant microphone permission when prompted
-5. Tap "Start" to begin listening
-6. Click finger rings together - watch counter increment
+## Next Steps to Try
 
-## Recent Bug Fixes
-
-### Issue #47: Watch statistics disappears after saving session notes (MERGED)
-
-**Problem**: `watchDetectorMetadata` was lost when updating session notes
-
-**Fix**: `updateSessionNotes()` and `updateActualPinchCount()` now load full session data from disk before re-saving, preserving all fields.
-
-**PR**: #50 (merged to main)
-
-## Paused Work: Template Training UI
-
-Committed in `aee5842` on branch `phase4-watch-deployment` (merged to main).
-
-**Status**: Tap offset bug fixed but feature needs further testing.
-
-**Resume**: The template training UI allows users to mark pinch peaks in recorded sessions and create personalized templates. See previous CURRENT_STATE.md for details.
-
-## Branch Status
-
-| Branch | Status | Description |
-|--------|--------|-------------|
-| `main` | Up to date | Contains Issue #47 fix and template training WIP |
-| `issue-48-audio-pinch-detection` | Active | Audio detection prototype (ready for testing) |
-| `phase4-watch-deployment` | Merged | Template training UI (paused) |
-
-## Open Issues
-
-| # | Title | Status |
-|---|-------|--------|
-| #48 | Investigate sound addition | In progress (prototype ready) |
-| #49 | Verify event inter arrival time | Open |
-| #46 | Auto Reset count | Open |
-| #47 | Watch statistics disappears | ✅ Fixed (PR #50) |
+1. **Lower thresholds further** - Try 0.5 dB threshold, 1.0 dB jump
+2. **Different rings** - Metal rings may produce louder clicks
+3. **Ring position** - Closer to Watch microphone (inner wrist?)
+4. **Alternative approach** - Frequency-based detection instead of energy
+5. **Hybrid with motion** - Combine audio + accelerometer for confirmation
 
 ## Quick Resume Commands
 
 ```bash
 # Check current state
-git branch
 git status
 git log --oneline -5
 
-# Switch to audio detection branch
-git checkout issue-48-audio-pinch-detection
+# Current branch
+git branch  # issue-48-audio-pinch-detection
 
-# Build Watch app (use Series 11 simulator or real Watch)
+# Build Watch app
 xcodebuild -scheme "DhikrCounter Watch App" -configuration Debug \
   -destination "platform=watchOS Simulator,name=Apple Watch Series 11 (46mm)" build
 
@@ -128,36 +92,44 @@ xcodebuild -scheme "DhikrCounter" -configuration Debug \
   -destination "platform=iOS Simulator,name=iPhone 17 Pro Max" build
 ```
 
-## Next Steps
+## Uncommitted Changes
 
-1. **Test on real Watch** - Deploy to Apple Watch and test with finger rings
-2. **Tune threshold** - Adjust based on actual ring click loudness
-3. **Compare with motion** - Run sessions with both detection methods
-4. **Decide on hybrid** - Consider combining audio + motion for better accuracy
-5. **Create PR** - Once testing is satisfactory
+All changes are uncommitted. To commit:
+```bash
+git add -A
+git commit -m "Improve audio detection sensitivity with dual detection method"
+```
 
 ## Technical Notes
 
 ### watchOS Audio Constraints
-- Sample rate fixed at 48kHz (cannot change)
+- Sample rate fixed at 48kHz
+- Buffer size 512 samples = ~10.7ms per buffer
 - Must disconnect inputNode from mainMixerNode to avoid feedback
-- Use AVAudioEngine tap, not AudioUnit/AURenderCallback
-- Permission via NSMicrophoneUsageDescription in Info.plist
+- Microphone sensitivity appears quite low for subtle sounds
 
-### Simulator Limitations
-- watchOS Simulator has no real microphone
-- Must test on physical Apple Watch for audio detection
-- Motion detection works in simulator
-
-## Files Structure
-
+### Detection Algorithm Flow
 ```
-DhikrCounter Watch App/
-├── AudioPinchDetector.swift    # NEW - Audio capture + onset detection
-├── AudioTestView.swift         # NEW - Test UI for audio detection
-├── ContentView.swift           # MODIFIED - Added audio test link
-├── Info.plist                  # MODIFIED - Microphone permission
-├── DhikrDetectionEngine.swift  # Existing motion detection
-├── StreamingPinchDetector.swift # Existing streaming DSP
-└── WatchSessionManager.swift   # Watch-iPhone communication
+Audio Buffer (512 samples @ 48kHz)
+    ↓
+Compute RMS Energy (vDSP)
+    ↓
+Convert to dB: 20 * log10(rms)
+    ↓
+Update Baseline (asymmetric smoothing)
+    ↓
+Check Detection:
+  - Method 1: rmsDb > baseline + threshold?
+  - Method 2: (rmsDb - previousRmsDb) > minJumpDb?
+    ↓
+If either true AND refractory passed → ONSET DETECTED
 ```
+
+## Open Issues
+
+| # | Title | Status |
+|---|-------|--------|
+| #48 | Investigate sound addition | In progress - sensitivity issues |
+| #49 | Verify event inter arrival time | Open |
+| #46 | Auto Reset count | Open |
+| #47 | Watch statistics disappears | ✅ Fixed (PR #50) |

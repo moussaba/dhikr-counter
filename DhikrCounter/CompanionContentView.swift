@@ -474,7 +474,13 @@ struct SettingsView: View {
     @AppStorage("tkeo_madWinSec") private var madWinSec: Double = 3.0
     @AppStorage("tkeo_minWidthMs") private var minWidthMs: Double = 70
     @AppStorage("tkeo_maxWidthMs") private var maxWidthMs: Double = 350
-    
+
+    // Audio Detection Parameters
+    @AppStorage("audio_enabled") private var audioEnabled: Bool = false
+    @AppStorage("audio_thresholdDb") private var audioThresholdDb: Double = 3.0
+    @AppStorage("audio_refractoryMs") private var audioRefractoryMs: Double = 200
+    @AppStorage("audio_baselineAlpha") private var audioBaselineAlpha: Double = 0.05
+
     var body: some View {
         NavigationStack {
             List {
@@ -1097,13 +1103,63 @@ struct SettingsView: View {
                     .padding(.vertical, 4)
                 }
                 
+                Section("Audio Detection (Experimental)") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Toggle(isOn: $audioEnabled) {
+                            VStack(alignment: .leading) {
+                                Text("Enable Audio Detection")
+                                Text("Use microphone to detect ring clicks")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        if audioEnabled {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text("Onset Threshold")
+                                        .font(.subheadline)
+                                    Spacer()
+                                    Text("+\(String(format: "%.1f", audioThresholdDb)) dB")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                }
+                                Text("Above baseline to trigger. Lower = more sensitive")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                Slider(value: $audioThresholdDb, in: 0.5...10.0, step: 0.5)
+                            }
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text("Refractory Period")
+                                        .font(.subheadline)
+                                    Spacer()
+                                    Text("\(Int(audioRefractoryMs)) ms")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                }
+                                Text("Minimum time between detections")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                Slider(value: $audioRefractoryMs, in: 100...500, step: 50)
+                            }
+
+                            Text("Tap 'Sync Now' below to send settings to Watch")
+                                .font(.caption2)
+                                .foregroundColor(.blue)
+                                .padding(.top, 4)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+
                 Section("Watch Sync") {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             VStack(alignment: .leading) {
                                 Text("Sync Settings to Watch")
                                     .foregroundColor(.primary)
-                                Text("Send current TKEO parameters to Apple Watch")
+                                Text("Send current TKEO and Audio parameters to Apple Watch")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
