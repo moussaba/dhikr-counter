@@ -2,6 +2,49 @@ import Foundation
 import AVFoundation
 import Accelerate
 
+// MARK: - Audio Detection Result
+
+/// Result of audio detection analysis - used by HybridDetectionManager for fusion with accelerometer
+enum AudioDetectionResult {
+    /// Audio confirmed a click with high confidence
+    case confirmed(timestamp: Date, spikeDb: Float, jump: Float)
+
+    /// Audio rejected a potential click (provides reason for hybrid fallback logic)
+    case rejected(reason: RejectionReason, timestamp: Date, spikeDb: Float)
+
+    /// No significant audio event detected
+    case noEvent
+
+    /// Reasons why audio rejected a potential click
+    enum RejectionReason: String {
+        case voice       // Sustained sound that didn't decay (voice, music, etc.)
+        case tooLoud     // Spike exceeded maxSpikeDb (ambient noise: door slam, cough)
+        case subThreshold // Below detection thresholds (not interesting)
+    }
+
+    /// Timestamp of the event (if any)
+    var timestamp: Date? {
+        switch self {
+        case .confirmed(let timestamp, _, _): return timestamp
+        case .rejected(_, let timestamp, _): return timestamp
+        case .noEvent: return nil
+        }
+    }
+
+    /// Whether this rejection could be a real click masked by noise
+    /// Used by hybrid detection to decide whether to check accelerometer
+    var shouldCheckAccelerometer: Bool {
+        switch self {
+        case .rejected(let reason, _, _):
+            // Only check accelerometer for noise-related rejections
+            // NOT for subThreshold (nothing happened)
+            return reason == .voice || reason == .tooLoud
+        case .confirmed, .noEvent:
+            return false
+        }
+    }
+}
+
 /// Audio-based pinch detection using Apple Watch microphone
 /// Detects sudden onset sounds (clicks/taps) from finger rings or covers
 @MainActor
@@ -113,6 +156,9 @@ class AudioPinchDetector: ObservableObject {
 
     /// Called when an onset (click sound) is detected
     var onOnsetDetected: ((Date, Float) -> Void)?
+
+    /// Called for ALL detection events (confirmed, rejected, etc.) - used by HybridDetectionManager
+    var onDetectionResult: ((AudioDetectionResult) -> Void)?
 
     // MARK: - Initialization
 
@@ -411,8 +457,9 @@ class AudioPinchDetector: ObservableObject {
                         self.addDebug(String(format: "CLICK #%d [%@]: +%.1fdB (jump:%.1f, decay:%d bufs)",
                                              self.onsetCount, filterMode, pending.spikeDb, pending.jump, updatedPending.buffersWaited))
 
-                        // Fire callback
+                        // Fire callbacks
                         self.onOnsetDetected?(pending.timestamp, pending.spikeDb)
+                        self.onDetectionResult?(.confirmed(timestamp: pending.timestamp, spikeDb: pending.spikeDb, jump: pending.jump))
                     }
                     self.pendingSpike = nil
                     self.elevatedBufferCount = 0
@@ -421,6 +468,10 @@ class AudioPinchDetector: ObservableObject {
                     // Signal stayed elevated too long - reject as voice/sustained sound
                     self.addDebug(String(format: "REJECTED [VOICE]: +%.1fdB stayed elevated %d buffers",
                                          pending.spikeDb, updatedPending.buffersWaited))
+
+                    // Notify hybrid manager - this rejection might be a real click masked by voice
+                    self.onDetectionResult?(.rejected(reason: .voice, timestamp: pending.timestamp, spikeDb: pending.spikeDb))
+
                     self.pendingSpike = nil
                     self.elevatedBufferCount = 0
                     // IMPORTANT: Wait for signal to return to baseline before accepting new spikes
@@ -448,6 +499,10 @@ class AudioPinchDetector: ObservableObject {
                 if spikeDb > self.maxSpikeDb {
                     self.addDebug(String(format: "REJECTED [TOO LOUD]: +%.1fdB > max %.0fdB",
                                          spikeDb, self.maxSpikeDb))
+
+                    // Notify hybrid manager - this rejection might be a real click masked by ambient noise
+                    self.onDetectionResult?(.rejected(reason: .tooLoud, timestamp: Date(), spikeDb: spikeDb))
+
                     // Don't even start validation - immediately reject
                     // Also wait for baseline to prevent rapid re-triggering
                     self.waitingForBaseline = true

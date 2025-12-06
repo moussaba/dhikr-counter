@@ -95,6 +95,12 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
     private var currentPinchConfig: PinchConfig?    // Store config used for this session
     private var configSource: String = "watch_defaults"  // Track if from iPhone or defaults
 
+    // MARK: - Hybrid Audio + Accelerometer Detection
+    private var hybridManager: HybridDetectionManager?
+    private var audioDetector: AudioPinchDetector?
+    @Published var useHybridDetection: Bool = false  // Toggle for hybrid mode
+    @Published var hybridClickSource: String = ""    // Last click source for debug UI
+
     override init() {
         super.init()
         // WCSession is automatically initialized by singleton
@@ -199,6 +205,11 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
         if useStreamingDetection {
             initializeStreamingDetector()
         }
+
+        // Initialize hybrid detection (Phase 5 - Audio + Accelerometer fusion)
+        if useHybridDetection {
+            initializeHybridDetection()
+        }
         
         // Start session timer
         startSessionTimer()
@@ -259,13 +270,16 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
         sessionStartTime = nil
         currentSessionId = nil
         
+        // Stop hybrid detection
+        stopHybridDetection()
+
         // Stop background session
         stopWorkoutSession()
         // Removed stopExtendedRuntimeSession() - no longer using extended runtime
-        
+
         // Stop session monitoring
         stopSessionMonitoring()
-        
+
         // Stop session timer
         stopSessionTimer()
         
@@ -393,7 +407,16 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
             if let event = detector.process(frame: frame) {
                 // Dispatch to main thread for UI update and haptic feedback
                 DispatchQueue.main.async { [weak self] in
-                    self?.registerStreamingPinch(event: event, timestamp: currentTime)
+                    guard let self = self else { return }
+
+                    // If hybrid mode is enabled, route through hybrid manager
+                    if self.useHybridDetection, let hybrid = self.hybridManager {
+                        hybrid.handleIMUEvent(event)
+                        // Don't directly register - hybrid manager will call back
+                    } else {
+                        // Standard mode - register directly
+                        self.registerStreamingPinch(event: event, timestamp: currentTime)
+                    }
                 }
             }
         }
@@ -619,6 +642,103 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
         print("   - gyroVetoThresh: \(config.gyroVetoThresh)")
         print("   - isiThresholdMs: \(config.isiThresholdMs)")
         print("   - templateValidation: \(useTemplate)")
+    }
+
+    // MARK: - Hybrid Audio + Accelerometer Detection (Phase 5)
+
+    /// Initialize hybrid detection system (audio + accelerometer fusion)
+    private func initializeHybridDetection() {
+        print("🎤 Initializing hybrid audio + accelerometer detection...")
+
+        Task { @MainActor in
+            // Create hybrid manager
+            self.hybridManager = HybridDetectionManager()
+
+            // Set up callback for hybrid clicks
+            self.hybridManager?.onHybridClick = { [weak self] source, timestamp in
+                DispatchQueue.main.async {
+                    self?.registerHybridPinch(source: source, timestamp: timestamp)
+                }
+            }
+
+            // Create and configure audio detector
+            self.audioDetector = AudioPinchDetector()
+
+            // Set up audio detection result callback
+            self.audioDetector?.onDetectionResult = { [weak self] result in
+                DispatchQueue.main.async {
+                    self?.hybridManager?.handleAudioResult(result)
+                }
+            }
+
+            // Request microphone permission and start listening
+            let granted = await self.audioDetector?.requestPermission() ?? false
+            if granted {
+                self.audioDetector?.startListening()
+                print("✅ Hybrid detection initialized - audio listening started")
+            } else {
+                print("⚠️ Microphone permission denied - hybrid detection will use IMU only")
+            }
+
+            print("🔗 Hybrid detection: Audio→HybridManager←IMU")
+        }
+    }
+
+    /// Stop hybrid detection system
+    private func stopHybridDetection() {
+        Task { @MainActor in
+            self.audioDetector?.stopListening()
+            self.audioDetector = nil
+            self.hybridManager = nil
+            self.hybridClickSource = ""
+            print("🛑 Hybrid detection stopped")
+        }
+    }
+
+    /// Handle detected pinch from hybrid manager
+    private func registerHybridPinch(source: HybridDetectionManager.HybridClickSource, timestamp: Date) {
+        pinchCount += 1
+        uiRefreshTrigger += 1  // Force UI refresh on watchOS
+        lastDetectionTime = timestamp
+        hybridClickSource = source.rawValue
+
+        // Check for milestones
+        let newMilestone = calculateMilestone(count: pinchCount)
+        let milestoneReached = newMilestone > currentMilestone
+        currentMilestone = newMilestone
+
+        // Provide appropriate haptic feedback
+        if milestoneReached {
+            provideMilestoneHaptic(milestone: newMilestone)
+        } else {
+            WKInterfaceDevice.current().play(.click)
+        }
+
+        // Log detection event
+        logDetectionEvent(
+            score: 1.0,  // Hybrid confidence
+            accel: 0,
+            gyro: 0,
+            time: timestamp,
+            manual: false
+        )
+
+        print("🔢 Hybrid pinch detected! Count: \(pinchCount), Source: \(source.rawValue)")
+    }
+
+    /// Toggle hybrid detection mode
+    public func setHybridDetection(enabled: Bool) {
+        useHybridDetection = enabled
+        print("🔄 Hybrid detection \(enabled ? "enabled" : "disabled")")
+
+        // If session is active, start/stop audio accordingly
+        if sessionState == .activeDhikr || sessionState == .setup {
+            if enabled && hybridManager == nil {
+                initializeHybridDetection()
+            } else if !enabled && hybridManager != nil {
+                stopHybridDetection()
+            }
+        }
     }
 
     /// Handle detected pinch event from streaming detector

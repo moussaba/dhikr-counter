@@ -1,77 +1,79 @@
-# Current State: Audio-Based Pinch Detection Prototype
+# Current State: Hybrid Audio + Accelerometer Detection
 
 **Date**: 2025-12-05
-**Branch**: `issue-48-audio-pinch-detection`
-**Status**: Testing audio sensitivity - ring clicks are hard to detect
+**Branch**: `issue-48-hybrid-audio-accelerometer`
+**Status**: Implementing hybrid detection - needs Xcode project file update
 
 ## Problem Being Solved
 
-Apple Watch microphone has low sensitivity for detecting subtle finger ring clicks:
-- Baseline hovers around -68 dB
-- Ring clicks barely register above baseline
-- Tapping ring on table works, but finger-to-finger clicks don't
+Audio detection works well in quiet environments but loses real clicks when:
+- Ambient noise causes `REJECTED [TOO LOUD]`
+- Voice sounds cause `REJECTED [VOICE]`
+- Background noise triggers `waitingForBaseline` state
 
-## Current Detection Approach (Dual Method)
+**Solution**: Hybrid detection where accelerometer (TKEO) backs up audio when audio rejects due to noise.
 
-The AudioPinchDetector now uses TWO detection methods:
+## Architecture: "Parallel with Audio-Priority Arbitration"
 
-1. **Threshold Method**: Signal > baseline + threshold
-2. **Jump Method (NEW)**: Sudden jump of 2+ dB from previous buffer
+```
+┌─────────────────┐     ┌─────────────────┐
+│ AudioPinchDet.  │     │ StreamingPinch  │
+│ (HPF + Peak)    │     │ (TKEO + NCC)    │
+└────────┬────────┘     └────────┬────────┘
+         │                       │
+         │  AudioResult          │  PinchEvent?
+         │  .confirmed(t)        │  (t, ncc, conf)
+         │  .rejected(reason,t)  │
+         ▼                       ▼
+    ┌────────────────────────────────────┐
+    │      HybridDetectionManager        │
+    │  • Association window: ±75ms       │
+    │  • Global refractory: 250ms        │
+    │  • Arbitration logic               │
+    └────────────────┬───────────────────┘
+                     │
+                     ▼
+              Single Click Output
+              (source: AUDIO | IMU_BACKUP)
+```
 
-Either method triggers detection (OR logic).
+## Decision Logic
 
-## Key Parameters (Current Defaults)
+| Audio Result | IMU in ±75ms? | Output |
+|-------------|---------------|--------|
+| `.confirmed` | Any | 1 click (AUDIO) |
+| `.rejected(VOICE/TOO_LOUD)` | NCC ≥ 0.60 | 1 click (IMU_BACKUP) |
+| `.rejected(VOICE/TOO_LOUD)` | No match | 0 clicks |
+| No audio event | NCC ≥ 0.70 | 1 click (IMU_STANDALONE) |
 
-| Parameter | Value | Description |
-|-----------|-------|-------------|
-| `onsetThresholdDb` | 1.5 dB | Above baseline to trigger |
-| `minJumpDb` | 2.0 dB | Minimum sudden jump to trigger |
-| `refractoryPeriod` | 250 ms | Min time between detections |
-| `baselineAlpha` | 0.03 | Baseline adaptation speed |
-| `bufferSize` | 512 samples | ~10ms at 48kHz (faster response) |
-
-## Baseline Adaptation (Asymmetric)
-
-| Signal Level | Baseline Behavior |
-|--------------|-------------------|
-| Below baseline | Adapts quickly (normal) |
-| 0-2 dB above | Adapts quickly (normal) |
-| 2 dB to threshold | Adapts slowly (1/10th speed) |
-| Above threshold | No adaptation (ignores spikes) |
-
-## Files Modified This Session
+## Files Created/Modified This Session
 
 | File | Changes |
 |------|---------|
-| `DhikrCounter Watch App/AudioPinchDetector.swift` | Dual detection, asymmetric baseline, smaller buffer |
-| `DhikrCounter Watch App/AudioTestView.swift` | Loads settings from iPhone, shows settings by default |
-| `DhikrCounter Watch App/WatchSessionManager.swift` | Added `getSetting()` helper, logs audio settings |
-| `DhikrCounter Watch App/ContentView.swift` | Added Audio Detection Test link in Settings |
-| `DhikrCounter Watch App/Info.plist` | Added NSMicrophoneUsageDescription |
-| `DhikrCounter/CompanionContentView.swift` | Added Audio Detection settings section |
-| `DhikrCounter/PhoneSessionManager.swift` | Added audio settings to Watch sync |
+| `DhikrCounter Watch App/AudioPinchDetector.swift` | Added `AudioDetectionResult` enum, `onDetectionResult` callback |
+| `DhikrCounter Watch App/HybridDetectionManager.swift` | **NEW** - Arbitration logic (needs Xcode add) |
+| `DhikrCounter Watch App/DhikrDetectionEngine.swift` | Integrated hybrid manager, routing, callbacks |
 
-## iOS Settings UI
+## ⚠️ IMPORTANT: Manual Step Required
 
-In iPhone app → Settings → "Audio Detection (Experimental)":
-- Toggle to enable/disable
-- Onset Threshold slider: 0.5 to 10.0 dB
-- Refractory Period slider: 100 to 500 ms
-- Must tap "Sync Now" to send to Watch
+**You must add `HybridDetectionManager.swift` to the Xcode project:**
 
-## Debug Info
+1. Open `DhikrCounter.xcodeproj` in Xcode
+2. In the Project Navigator, right-click on "DhikrCounter Watch App"
+3. Select "Add Files to 'DhikrCounter'..."
+4. Navigate to `DhikrCounter Watch App/HybridDetectionManager.swift`
+5. Make sure "DhikrCounter Watch App" target is checked
+6. Click "Add"
 
-The Watch debug log shows detection method:
-- `ONSET #1 [JUMP]: +1.5dB (jump:3.2)` - Detected by sudden jump
-- `ONSET #2 [THRESH]: +2.1dB (jump:0.5)` - Detected by threshold
+## Key Parameters
 
-## Next Steps to Try
-
-1. **Lower thresholds further** - Try 0.5 dB threshold, 1.0 dB jump
-2. **Different rings** - Metal rings may produce louder clicks
-3. **Ring position** - Closer to Watch microphone (inner wrist?)
-4. **Alternative approach** - Frequency-based detection instead of energy
-5. **Hybrid with motion** - Combine audio + accelerometer for confirmation
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `associationWindowMs` | 75 | Link audio/IMU events within ±75ms |
+| `globalRefractoryMs` | 250 | Min time between output clicks |
+| `backupNccThreshold` | 0.60 | IMU threshold when audio rejects |
+| `standaloneNccThreshold` | 0.70 | IMU threshold with no audio event |
+| `maxSpikeDb` | 35.0 | Audio rejects louder as "ambient" |
 
 ## Quick Resume Commands
 
@@ -81,55 +83,32 @@ git status
 git log --oneline -5
 
 # Current branch
-git branch  # issue-48-audio-pinch-detection
+git branch  # issue-48-hybrid-audio-accelerometer
 
-# Build Watch app
+# Build Watch app (after adding HybridDetectionManager.swift to Xcode)
 xcodebuild -scheme "DhikrCounter Watch App" -configuration Debug \
   -destination "platform=watchOS Simulator,name=Apple Watch Series 11 (46mm)" build
-
-# Build iOS app
-xcodebuild -scheme "DhikrCounter" -configuration Debug \
-  -destination "platform=iOS Simulator,name=iPhone 17 Pro Max" build
 ```
 
-## Uncommitted Changes
+## Testing Plan
 
-All changes are uncommitted. To commit:
-```bash
-git add -A
-git commit -m "Improve audio detection sensitivity with dual detection method"
-```
+1. **Quiet environment**: Audio should confirm most clicks (no IMU backup needed)
+2. **Noisy environment**: When audio rejects, IMU should rescue valid clicks
+3. **Voice test**: Say "Hmm" - audio rejects as VOICE, IMU should NOT fire (no pinch motion)
+4. **Door slam**: Audio rejects as TOO_LOUD, IMU should NOT fire (no pinch motion)
+5. **Click during noise**: Audio rejects, but IMU detects pinch motion → count click
 
-## Technical Notes
+## Still To Do
 
-### watchOS Audio Constraints
-- Sample rate fixed at 48kHz
-- Buffer size 512 samples = ~10.7ms per buffer
-- Must disconnect inputNode from mainMixerNode to avoid feedback
-- Microphone sensitivity appears quite low for subtle sounds
-
-### Detection Algorithm Flow
-```
-Audio Buffer (512 samples @ 48kHz)
-    ↓
-Compute RMS Energy (vDSP)
-    ↓
-Convert to dB: 20 * log10(rms)
-    ↓
-Update Baseline (asymmetric smoothing)
-    ↓
-Check Detection:
-  - Method 1: rmsDb > baseline + threshold?
-  - Method 2: (rmsDb - previousRmsDb) > minJumpDb?
-    ↓
-If either true AND refractory passed → ONSET DETECTED
-```
+- [ ] Add HybridDetectionManager.swift to Xcode project (manual step)
+- [ ] Add UI toggle for hybrid mode in Watch Settings
+- [ ] Test hybrid detection in various environments
+- [ ] Tune thresholds based on real-world testing
 
 ## Open Issues
 
 | # | Title | Status |
 |---|-------|--------|
-| #48 | Investigate sound addition | In progress - sensitivity issues |
+| #48 | Investigate sound addition | In progress - implementing hybrid |
 | #49 | Verify event inter arrival time | Open |
 | #46 | Auto Reset count | Open |
-| #47 | Watch statistics disappears | ✅ Fixed (PR #50) |

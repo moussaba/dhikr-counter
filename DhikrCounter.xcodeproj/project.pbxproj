@@ -48,6 +48,7 @@
 		F595E4672EE3CE5D00B1C918 /* AudioPinchDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = F595E4652EE3CE5D00B1C918 /* AudioPinchDetector.swift */; };
 		F595E4682EE3CE5D00B1C918 /* AudioTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F595E4662EE3CE5D00B1C918 /* AudioTestView.swift */; };
 		F5991E902E66F499006885C5 /* DhikrCounter Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 31683209E7C5139A132FBBC6 /* DhikrCounter Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		F5A347F22EE405FA001DE5CC /* HybridDetectionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5A347F12EE405FA001DE5CC /* HybridDetectionManager.swift */; };
 		FAAC33ABD9E9A7C22A589960 /* WatchKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B42F69224B2415F36C1294F4 /* WatchKit.framework */; };
 /* End PBXBuildFile section */
 
@@ -137,6 +138,7 @@
 		F58368422ED6CABB0044F9A9 /* TemplateTrainingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateTrainingView.swift; sourceTree = "<group>"; };
 		F595E4652EE3CE5D00B1C918 /* AudioPinchDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPinchDetector.swift; sourceTree = "<group>"; };
 		F595E4662EE3CE5D00B1C918 /* AudioTestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioTestView.swift; sourceTree = "<group>"; };
+		F5A347F12EE405FA001DE5CC /* HybridDetectionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HybridDetectionManager.swift; sourceTree = "<group>"; };
 		F657C64E8290259D316B999E /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
 		FEDA213EFCDD446253B7B013 /* DataVisualizationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataVisualizationView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -215,6 +217,7 @@
 		8EC7B9FF2761149C94C0E39F /* DhikrCounter Watch App */ = {
 			isa = PBXGroup;
 			children = (
+				F5A347F12EE405FA001DE5CC /* HybridDetectionManager.swift */,
 				F595E4652EE3CE5D00B1C918 /* AudioPinchDetector.swift */,
 				F595E4662EE3CE5D00B1C918 /* AudioTestView.swift */,
 				F531EB3A2E6CAB3500CCD0B6 /* DhikrCounter Watch App.entitlements */,
@@ -392,6 +395,7 @@
 				F595E4672EE3CE5D00B1C918 /* AudioPinchDetector.swift in Sources */,
 				F595E4682EE3CE5D00B1C918 /* AudioTestView.swift in Sources */,
 				692B0EA91BAB925090D459F0 /* SensorReading.swift in Sources */,
+				F5A347F22EE405FA001DE5CC /* HybridDetectionManager.swift in Sources */,
 				C01845AD9A84B3EABC33FB02 /* SessionView.swift in Sources */,
 				F575EFA72E86A100006F82C7 /* StreamingPinchDetector.swift in Sources */,
 			);

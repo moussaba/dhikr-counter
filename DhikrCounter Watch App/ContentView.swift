@@ -51,12 +51,16 @@ struct MainDhikrView: View {
 
 /// Settings list view showing all TKEO parameters
 struct SettingsListView: View {
+    @EnvironmentObject var detectionEngine: DhikrDetectionEngine
     @ObservedObject private var sessionManager = WatchSessionManager.shared
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
+                    // Hybrid Detection Toggle
+                    HybridDetectionToggle()
+
                     // Experimental: Audio Detection Test
                     NavigationLink(destination: AudioTestView()) {
                         HStack {
@@ -414,6 +418,62 @@ struct ControlButtonsView: View {
         } else {
             print("🔵 Calling stopSession()")
             detectionEngine.stopSession()
+        }
+    }
+}
+
+// MARK: - Hybrid Detection Toggle
+
+/// Toggle for enabling hybrid audio + accelerometer detection
+struct HybridDetectionToggle: View {
+    @EnvironmentObject var detectionEngine: DhikrDetectionEngine
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle(isOn: Binding(
+                get: { detectionEngine.useHybridDetection },
+                set: { detectionEngine.setHybridDetection(enabled: $0) }
+            )) {
+                HStack(spacing: 6) {
+                    Image(systemName: "waveform.path.ecg")
+                        .foregroundColor(.cyan)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Hybrid Detection")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                        Text("Audio + Accelerometer")
+                            .font(.system(size: 9))
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            .toggleStyle(.switch)
+
+            // Show last click source when hybrid is enabled
+            if detectionEngine.useHybridDetection && !detectionEngine.hybridClickSource.isEmpty {
+                HStack(spacing: 4) {
+                    Text("Last:")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                    Text(detectionEngine.hybridClickSource)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(sourceColor)
+                }
+                .padding(.leading, 4)
+            }
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 8)
+        .background(Color.cyan.opacity(0.1))
+        .cornerRadius(8)
+    }
+
+    private var sourceColor: Color {
+        switch detectionEngine.hybridClickSource {
+        case "AUDIO": return .green
+        case "IMU_BACKUP": return .orange
+        case "IMU_ONLY": return .blue
+        default: return .secondary
         }
     }
 }
