@@ -89,8 +89,9 @@ class AudioPinchDetector: ObservableObject {
     private var previousRmsDb: Float = -60.0
 
     /// Minimum jump in dB from one buffer to next to count as onset
-    /// Based on testing: real clicks show 15-30 dB jumps, noise shows 2-7 dB
-    var minJumpDb: Float = 10.0
+    /// Based on testing: real clicks show 24-35 dB jumps, bad clicks show 13-14 dB
+    /// Raised from 10.0 to 18.0 to reject ambient noise artifacts
+    var minJumpDb: Float = 18.0
 
     /// Maximum spike above baseline (dB) to accept as a click
     /// Spikes louder than this are likely ambient noise (door slam, cough, loud voice)

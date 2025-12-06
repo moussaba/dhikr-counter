@@ -982,23 +982,44 @@ extension PhoneSessionManager: @preconcurrency WCSessionDelegate {
             }
         }
 
+        // Extract hybridDetectionMetadata from transfer metadata (for CSV format)
+        var hybridDetectionMetadataFromTransfer: HybridDetectionMetadata? = nil
+        if let hybridJSON = metadata["hybridDetectionMetadataJSON"] as? String,
+           !hybridJSON.isEmpty,
+           let hybridData = hybridJSON.data(using: .utf8) {
+            do {
+                hybridDetectionMetadataFromTransfer = try JSONDecoder().decode(HybridDetectionMetadata.self, from: hybridData)
+                print("📥 Extracted hybridDetectionMetadata from transfer metadata (\(hybridDetectionMetadataFromTransfer?.totalClicks ?? 0) clicks)")
+            } catch {
+                print("⚠️ Failed to decode hybridDetectionMetadata from transfer metadata: \(error)")
+            }
+        }
+
         // Process file data in background
         Task {
             do {
                 var sessionData = try await processSessionFile(data: fileData, format: format, sessionIdString: sessionIdString)
 
                 // If we got metadata from transfer metadata (CSV case), use it
-                if sessionData.watchDetectorMetadata == nil && watchDetectorMetadataFromTransfer != nil {
+                let needsWatchMetadata = sessionData.watchDetectorMetadata == nil && watchDetectorMetadataFromTransfer != nil
+                let needsHybridMetadata = sessionData.hybridDetectionMetadata == nil && hybridDetectionMetadataFromTransfer != nil
+
+                if needsWatchMetadata || needsHybridMetadata {
                     sessionData = SessionData(
                         sessionId: sessionData.sessionId,
                         timestamp: sessionData.timestamp,
                         sensorData: sessionData.sensorData,
                         detectionEvents: sessionData.detectionEvents,
                         motionInterruptions: sessionData.motionInterruptions,
-                        watchDetectorMetadata: watchDetectorMetadataFromTransfer,
-                        hybridDetectionMetadata: sessionData.hybridDetectionMetadata
+                        watchDetectorMetadata: watchDetectorMetadataFromTransfer ?? sessionData.watchDetectorMetadata,
+                        hybridDetectionMetadata: hybridDetectionMetadataFromTransfer ?? sessionData.hybridDetectionMetadata
                     )
-                    print("📥 Added watchDetectorMetadata from transfer metadata to SessionData")
+                    if needsWatchMetadata {
+                        print("📥 Added watchDetectorMetadata from transfer metadata to SessionData")
+                    }
+                    if needsHybridMetadata {
+                        print("📥 Added hybridDetectionMetadata from transfer metadata to SessionData (\(hybridDetectionMetadataFromTransfer?.totalClicks ?? 0) clicks)")
+                    }
                 }
                 
                 await MainActor.run {

@@ -98,7 +98,7 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
     // MARK: - Hybrid Audio + Accelerometer Detection
     private var hybridManager: HybridDetectionManager?
     private var audioDetector: AudioPinchDetector?
-    @Published var useHybridDetection: Bool = false  // Toggle for hybrid mode
+    @Published var useHybridDetection: Bool = true  // Toggle for hybrid mode (default ON)
     @Published var hybridClickSource: String = ""    // Last click source for debug UI
 
     override init() {
@@ -234,12 +234,12 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
     
     func stopSession() {
         print("🛑 Stopping sensor data collection session")
-        
+
         // Stop motion updates first
         if motionManager.isDeviceMotionActive {
             motionManager.stopDeviceMotionUpdates()
         }
-        
+
         // Log data summary before transfer (using thread-safe queue)
         dataLogQueue.sync {
             print("📊 Collection Summary:")
@@ -252,26 +252,44 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
                 print("   📈 Average sampling rate: \(String(format: "%.1f", Double(sensorDataLog.count) / max(duration, 0.001))) Hz")
             }
         }
-        
+
         // Transfer enhanced sensor data to iPhone
+        // IMPORTANT: Generate hybrid metadata on MainActor BEFORE stopHybridDetection() is called
+        // to avoid race condition where hybridManager becomes nil
         if let sessionId = currentSessionId {
             print("🚚 Starting data transfer...")
-            transferSessionDataToPhone(sessionId: sessionId) { [weak self] success in
-                if success {
-                    print("✅ Transfer completed successfully - clearing sensor data from memory")
-                    self?.clearLogs()
-                } else {
-                    print("❌ Transfer failed - keeping sensor data for retry")
+            print("🔍 DEBUG: useHybridDetection=\(useHybridDetection), hybridManager=\(hybridManager != nil ? "EXISTS" : "NIL")")
+            Task { @MainActor in
+                // Capture hybrid metadata while hybridManager still exists
+                print("🔍 DEBUG [MainActor]: About to generate hybrid metadata")
+                print("🔍 DEBUG [MainActor]: useHybridDetection=\(self.useHybridDetection), hybridManager=\(self.hybridManager != nil ? "EXISTS" : "NIL")")
+                let hybridMetadataSnapshot = self.generateHybridMetadata()
+                print("🔍 DEBUG [MainActor]: hybridMetadataSnapshot=\(hybridMetadataSnapshot != nil ? "GENERATED (clicks: \(hybridMetadataSnapshot!.totalClicks))" : "NIL")")
+
+                // Now transfer with the captured metadata
+                self.transferSessionDataToPhone(sessionId: sessionId, hybridMetadata: hybridMetadataSnapshot) { [weak self] success in
+                    if success {
+                        print("✅ Transfer completed successfully - clearing sensor data from memory")
+                        self?.clearLogs()
+                    } else {
+                        print("❌ Transfer failed - keeping sensor data for retry")
+                    }
                 }
+
+                // Stop hybrid detection AFTER metadata is captured
+                self.stopHybridDetection()
+            }
+        } else {
+            print("⚠️ No currentSessionId - skipping data transfer")
+            // No session to transfer, just stop hybrid detection
+            Task { @MainActor in
+                self.stopHybridDetection()
             }
         }
-        
+
         sessionState = .inactive
         sessionStartTime = nil
         currentSessionId = nil
-        
-        // Stop hybrid detection
-        stopHybridDetection()
 
         // Stop background session
         stopWorkoutSession()
@@ -847,7 +865,7 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
         }
 
         let stats = hybrid.getStatsForTransfer()
-        let debugEntries = Array(hybrid.debugLog.suffix(30))  // Last 30 entries
+        let debugEntries = Array(hybrid.debugLog.suffix(50))  // Last 50 entries
 
         return HybridDetectionMetadata(
             hybridModeEnabled: useHybridDetection,
@@ -857,9 +875,15 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
             imuStandalone: stats.imuStandalone,
             rejectedNoImuMatch: stats.rejectedNoImuMatch,
             rejectedRefractory: stats.rejectedRefractory,
+            rejectedIEIOutlier: stats.rejectedIEIOutlier,
             minIEI: stats.minIEI,
             maxIEI: stats.maxIEI,
             avgIEI: stats.avgIEI,
+            rhythmLearned: stats.rhythmLearned,
+            learnedMeanIEI: stats.learnedMeanIEI,
+            learnedStddevIEI: stats.learnedStddevIEI,
+            learnedMinBound: stats.learnedMinBound,
+            learnedMaxBound: stats.learnedMaxBound,
             associationWindowMs: hybrid.associationWindowMs,
             globalRefractoryMs: hybrid.globalRefractoryMs,
             backupNccThreshold: hybrid.backupNccThreshold,
@@ -940,11 +964,11 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
     }
     
     // MARK: - Data Transfer to iPhone
-    
-    private func transferSessionDataToPhone(sessionId: UUID, completion: @escaping (Bool) -> Void) {
-        // First, generate metadata on main actor (it accesses @MainActor properties)
+
+    private func transferSessionDataToPhone(sessionId: UUID, hybridMetadata: HybridDetectionMetadata?, completion: @escaping (Bool) -> Void) {
+        // Generate detector metadata (TKEO) on main actor
         let detectorMetadata = self.generateDetectorMetadata()
-        // hybridMetadata must be generated on MainActor, we'll do it inside the Task
+        // hybridMetadata is passed in - already captured before stopHybridDetection()
 
         dataLogQueue.async { [weak self] in
             guard let self = self else { return }
@@ -961,8 +985,8 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
 
             DispatchQueue.main.async {
                 Task { @MainActor in
-                    // Generate hybrid metadata on MainActor since it accesses @MainActor properties
-                    let hybridMetadata = self.generateHybridMetadata()
+                    // Use the pre-captured hybridMetadata (passed as parameter)
+                    // This avoids race condition where hybridManager is nil
 
                     self.sessionManager.transferSensorData(
                         sensorData: sensorDataCopy,
@@ -1006,9 +1030,13 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
             print("No active session to transfer")
             return
         }
-        
-        transferSessionDataToPhone(sessionId: sessionId) { success in
-            print("Manual transfer \(success ? "succeeded" : "failed")")
+
+        // For manual transfer during active session, generate metadata on MainActor
+        Task { @MainActor in
+            let hybridMetadata = self.generateHybridMetadata()
+            self.transferSessionDataToPhone(sessionId: sessionId, hybridMetadata: hybridMetadata) { success in
+                print("Manual transfer \(success ? "succeeded" : "failed")")
+            }
         }
     }
     

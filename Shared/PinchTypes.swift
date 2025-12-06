@@ -262,11 +262,19 @@ public struct HybridDetectionMetadata: Codable {
     // Rejection counts
     public let rejectedNoImuMatch: Int
     public let rejectedRefractory: Int
+    public let rejectedIEIOutlier: Int
 
     // Inter-event interval statistics
     public let minIEI: Double  // ms
     public let maxIEI: Double  // ms
     public let avgIEI: Double  // ms
+
+    // Learned rhythm pattern
+    public let rhythmLearned: Bool
+    public let learnedMeanIEI: Double   // ms
+    public let learnedStddevIEI: Double // ms
+    public let learnedMinBound: Double  // ms
+    public let learnedMaxBound: Double  // ms
 
     // Configuration
     public let associationWindowMs: Double
@@ -285,9 +293,15 @@ public struct HybridDetectionMetadata: Codable {
         imuStandalone: Int,
         rejectedNoImuMatch: Int,
         rejectedRefractory: Int,
+        rejectedIEIOutlier: Int,
         minIEI: Double,
         maxIEI: Double,
         avgIEI: Double,
+        rhythmLearned: Bool,
+        learnedMeanIEI: Double,
+        learnedStddevIEI: Double,
+        learnedMinBound: Double,
+        learnedMaxBound: Double,
         associationWindowMs: Double,
         globalRefractoryMs: Double,
         backupNccThreshold: Float,
@@ -301,9 +315,15 @@ public struct HybridDetectionMetadata: Codable {
         self.imuStandalone = imuStandalone
         self.rejectedNoImuMatch = rejectedNoImuMatch
         self.rejectedRefractory = rejectedRefractory
+        self.rejectedIEIOutlier = rejectedIEIOutlier
         self.minIEI = minIEI
         self.maxIEI = maxIEI
         self.avgIEI = avgIEI
+        self.rhythmLearned = rhythmLearned
+        self.learnedMeanIEI = learnedMeanIEI
+        self.learnedStddevIEI = learnedStddevIEI
+        self.learnedMinBound = learnedMinBound
+        self.learnedMaxBound = learnedMaxBound
         self.associationWindowMs = associationWindowMs
         self.globalRefractoryMs = globalRefractoryMs
         self.backupNccThreshold = backupNccThreshold
@@ -329,6 +349,7 @@ public struct HybridDetectionMetadata: Codable {
         lines.append("--- Rejections ---")
         lines.append("No IMU Match: \(rejectedNoImuMatch)")
         lines.append("Refractory: \(rejectedRefractory)")
+        lines.append("IEI Outlier: \(rejectedIEIOutlier)")
         lines.append("")
 
         lines.append("--- Inter-Event Intervals ---")
@@ -336,6 +357,14 @@ public struct HybridDetectionMetadata: Codable {
         lines.append("Max: \(String(format: "%.0f", maxIEI))ms")
         lines.append("Avg: \(String(format: "%.0f", avgIEI))ms")
         lines.append("")
+
+        if rhythmLearned {
+            lines.append("--- Learned Rhythm ---")
+            lines.append("Mean: \(String(format: "%.0f", learnedMeanIEI))ms")
+            lines.append("Stddev: \(String(format: "%.0f", learnedStddevIEI))ms")
+            lines.append("Bounds: [\(String(format: "%.0f", learnedMinBound))-\(String(format: "%.0f", learnedMaxBound))]ms")
+            lines.append("")
+        }
 
         lines.append("--- Configuration ---")
         lines.append("Association Window: ±\(Int(associationWindowMs))ms")

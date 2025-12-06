@@ -136,6 +136,17 @@ class WatchSessionManager: NSObject, ObservableObject {
                 }
             }
 
+            // Encode hybrid detection metadata as JSON string
+            var hybridMetadataJSON: String = ""
+            if let hybrid = hybridMetadata {
+                let encoder = JSONEncoder()
+                if let hybridData = try? encoder.encode(hybrid),
+                   let hybridString = String(data: hybridData, encoding: .utf8) {
+                    hybridMetadataJSON = hybridString
+                    print("📦 CSV transfer: Including hybrid metadata JSON (\(hybridString.count) chars, \(hybrid.totalClicks) clicks)")
+                }
+            }
+
             metadata = [
                 "type": "sessionFile",
                 "format": "CSV",
@@ -145,7 +156,8 @@ class WatchSessionManager: NSObject, ObservableObject {
                 "motionInterruptionCount": String(motionInterruptions.count),
                 "timestamp": String(Date().timeIntervalSince1970),
                 "fileSize": String(fileData.count),
-                "watchDetectorMetadataJSON": detectorMetadataJSON
+                "watchDetectorMetadataJSON": detectorMetadataJSON,
+                "hybridDetectionMetadataJSON": hybridMetadataJSON
             ]
         } else {
             // Create JSON format (default)

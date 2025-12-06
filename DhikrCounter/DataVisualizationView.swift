@@ -437,11 +437,14 @@ struct SessionDetailView: View {
                 // Session overview
                 SessionOverviewCard(session: session)
 
-                // Watch detector metadata (if available)
-                WatchDetectorMetadataCard(sessionId: session.id.uuidString)
-
-                // Hybrid detection metadata (if available)
+                // Hybrid detection metadata (primary - shown first when available)
                 HybridDetectionMetadataCard(sessionId: session.id.uuidString)
+
+                // Watch IMU detector metadata (only show if hybrid metadata is NOT available)
+                // This covers older sessions that used IMU-only detection
+                if dataManager.getHybridDetectionMetadata(for: session.id.uuidString) == nil {
+                    WatchDetectorMetadataCard(sessionId: session.id.uuidString)
+                }
 
                 // Validation data
                 ValidationDataCard(session: session)
@@ -517,19 +520,37 @@ struct SessionOverviewCard: View {
     @ObservedObject private var dataManager = PhoneSessionManager.shared
     @State private var isEditingNotes = false
     @State private var notesText: String = ""
-    
+
+    private var hybridMetadata: HybridDetectionMetadata? {
+        dataManager.getHybridDetectionMetadata(for: session.id.uuidString)
+    }
+
+    private var watchMetadata: WatchDetectorMetadata? {
+        dataManager.getWatchDetectorMetadata(for: session.id.uuidString)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Session Overview")
                 .font(.headline)
                 .fontWeight(.semibold)
-            
+
             LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 12) {
                 OverviewItem(title: "Session ID", value: session.id.uuidString.prefix(8).description)
                 OverviewItem(title: "Start Time", value: DateFormatter.sessionFormatter.string(from: session.startTime))
                 OverviewItem(title: "Duration", value: String(format: "%.1fs", session.sessionDuration))
-                OverviewItem(title: "Status", value: "Completed")
-                
+
+                // Pinch count - prioritize hybrid metadata, fall back to watch/session data
+                if let hybrid = hybridMetadata {
+                    OverviewItem(title: "Dhikr Count", value: "\(hybrid.totalClicks)")
+                } else if let watch = watchMetadata {
+                    OverviewItem(title: "Dhikr Count", value: "\(watch.totalPinchesDetected)")
+                } else if session.totalPinches > 0 {
+                    OverviewItem(title: "Dhikr Count", value: "\(session.totalPinches)")
+                } else {
+                    OverviewItem(title: "Status", value: "Completed")
+                }
+
                 // Motion interruption count
                 let interruptionCount = dataManager.getMotionInterruptionCount(for: session.id.uuidString)
                 if interruptionCount > 0 {
@@ -861,6 +882,29 @@ struct HybridDetectionMetadataCard: View {
 
                     Divider()
 
+                    // Learned Rhythm (if available)
+                    if metadata.rhythmLearned {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Learned Rhythm")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.secondary)
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.green)
+                                    .font(.caption)
+                            }
+
+                            LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 8) {
+                                WatchStatRow(label: "Mean", value: String(format: "%.0fms", metadata.learnedMeanIEI))
+                                WatchStatRow(label: "Stddev", value: String(format: "%.0fms", metadata.learnedStddevIEI))
+                                WatchStatRow(label: "Bounds", value: "[\(Int(metadata.learnedMinBound))-\(Int(metadata.learnedMaxBound))]")
+                            }
+                        }
+
+                        Divider()
+                    }
+
                     // Rejection Statistics
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Rejections")
@@ -868,9 +912,10 @@ struct HybridDetectionMetadataCard: View {
                             .fontWeight(.medium)
                             .foregroundColor(.secondary)
 
-                        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 8) {
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 8) {
                             WatchStatRow(label: "No IMU Match", value: "\(metadata.rejectedNoImuMatch)")
                             WatchStatRow(label: "Refractory", value: "\(metadata.rejectedRefractory)")
+                            WatchStatRow(label: "IEI Outlier", value: "\(metadata.rejectedIEIOutlier)")
                         }
                     }
 
@@ -896,22 +941,48 @@ struct HybridDetectionMetadataCard: View {
                         Divider()
 
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Debug Log (last \(metadata.debugLogEntries.count) entries)")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
+                            HStack {
+                                Text("Detection Log (\(metadata.debugLogEntries.count) entries)")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                                // Legend
+                                HStack(spacing: 8) {
+                                    Circle().fill(Color.green).frame(width: 8, height: 8)
+                                    Text("Audio").font(.caption2)
+                                    Circle().fill(Color.orange).frame(width: 8, height: 8)
+                                    Text("IMU").font(.caption2)
+                                    Circle().fill(Color.purple).frame(width: 8, height: 8)
+                                    Text("Outlier").font(.caption2)
+                                    Circle().fill(Color.red).frame(width: 8, height: 8)
+                                    Text("Reject").font(.caption2)
+                                }
                                 .foregroundColor(.secondary)
+                            }
 
                             ScrollView {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    ForEach(metadata.debugLogEntries, id: \.self) { entry in
-                                        Text(entry)
-                                            .font(.system(size: 10, design: .monospaced))
-                                            .foregroundColor(logEntryColor(entry))
+                                VStack(alignment: .leading, spacing: 3) {
+                                    ForEach(Array(metadata.debugLogEntries.enumerated()), id: \.offset) { index, entry in
+                                        HStack(alignment: .top, spacing: 4) {
+                                            // Entry number
+                                            Text("\(index + 1).")
+                                                .font(.system(size: 9, design: .monospaced))
+                                                .foregroundColor(.secondary)
+                                                .frame(width: 24, alignment: .trailing)
+
+                                            // Log entry with color coding
+                                            Text(entry)
+                                                .font(.system(size: 10, design: .monospaced))
+                                                .foregroundColor(logEntryColor(entry))
+                                                .fixedSize(horizontal: false, vertical: true)
+                                        }
                                     }
                                 }
+                                .frame(maxWidth: .infinity, alignment: .leading)
                             }
-                            .frame(maxHeight: 200)
-                            .padding(8)
+                            .frame(maxHeight: 300)
+                            .padding(10)
                             .background(Color(.systemGray6))
                             .cornerRadius(8)
                         }
@@ -941,14 +1012,31 @@ struct HybridDetectionMetadataCard: View {
     }
 
     private func logEntryColor(_ entry: String) -> Color {
+        // Successful clicks (green shades)
         if entry.contains("CLICK [AUDIO]") {
             return .green
         } else if entry.contains("CLICK [IMU_BACKUP]") {
             return .orange
         } else if entry.contains("CLICK [IMU_ONLY]") {
             return .blue
-        } else if entry.contains("REJECTED") || entry.contains("blocked") || entry.contains("expired") {
+        }
+        // IEI-related (purple/cyan)
+        else if entry.contains("IEI OUTLIER") || entry.contains("Event interval") {
+            return .purple
+        } else if entry.contains("IEI Learning") || entry.contains("Rhythm learned") {
+            return .cyan
+        } else if entry.contains("Long pause detected") || entry.contains("re-establishing") {
+            return .mint
+        }
+        // Rejections (red shades)
+        else if entry.contains("REJECTED") || entry.contains("blocked") || entry.contains("expired") {
             return .red
+        } else if entry.contains("DISABLED") {
+            return .gray
+        }
+        // Initialization/config
+        else if entry.contains("initialized") || entry.contains("Config:") {
+            return .secondary
         }
         return .primary
     }
