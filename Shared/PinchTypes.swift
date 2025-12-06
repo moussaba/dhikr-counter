@@ -245,6 +245,113 @@ public struct PinchTemplate {
     }
 }
 
+// MARK: - Hybrid Detection Metadata
+
+/// Metadata about hybrid audio + accelerometer detection
+/// Transferred from Watch to iPhone with session data for debugging/analysis
+public struct HybridDetectionMetadata: Codable {
+    // Mode enabled
+    public let hybridModeEnabled: Bool
+
+    // Click counts by source
+    public let totalClicks: Int
+    public let audioConfirmed: Int
+    public let imuBackup: Int
+    public let imuStandalone: Int
+
+    // Rejection counts
+    public let rejectedNoImuMatch: Int
+    public let rejectedRefractory: Int
+
+    // Inter-event interval statistics
+    public let minIEI: Double  // ms
+    public let maxIEI: Double  // ms
+    public let avgIEI: Double  // ms
+
+    // Configuration
+    public let associationWindowMs: Double
+    public let globalRefractoryMs: Double
+    public let backupNccThreshold: Float
+    public let standaloneNccThreshold: Float
+
+    // Debug log (last N entries)
+    public let debugLogEntries: [String]
+
+    public init(
+        hybridModeEnabled: Bool,
+        totalClicks: Int,
+        audioConfirmed: Int,
+        imuBackup: Int,
+        imuStandalone: Int,
+        rejectedNoImuMatch: Int,
+        rejectedRefractory: Int,
+        minIEI: Double,
+        maxIEI: Double,
+        avgIEI: Double,
+        associationWindowMs: Double,
+        globalRefractoryMs: Double,
+        backupNccThreshold: Float,
+        standaloneNccThreshold: Float,
+        debugLogEntries: [String]
+    ) {
+        self.hybridModeEnabled = hybridModeEnabled
+        self.totalClicks = totalClicks
+        self.audioConfirmed = audioConfirmed
+        self.imuBackup = imuBackup
+        self.imuStandalone = imuStandalone
+        self.rejectedNoImuMatch = rejectedNoImuMatch
+        self.rejectedRefractory = rejectedRefractory
+        self.minIEI = minIEI
+        self.maxIEI = maxIEI
+        self.avgIEI = avgIEI
+        self.associationWindowMs = associationWindowMs
+        self.globalRefractoryMs = globalRefractoryMs
+        self.backupNccThreshold = backupNccThreshold
+        self.standaloneNccThreshold = standaloneNccThreshold
+        self.debugLogEntries = debugLogEntries
+    }
+
+    /// Generate a summary string for display in debug UI
+    public func summary() -> String {
+        var lines: [String] = []
+
+        lines.append("=== Hybrid Detection Metadata ===")
+        lines.append("Mode: \(hybridModeEnabled ? "Enabled" : "Disabled")")
+        lines.append("")
+
+        lines.append("--- Click Sources ---")
+        lines.append("Total Clicks: \(totalClicks)")
+        lines.append("  Audio Confirmed: \(audioConfirmed) (\(percentage(audioConfirmed, of: totalClicks)))")
+        lines.append("  IMU Backup: \(imuBackup) (\(percentage(imuBackup, of: totalClicks)))")
+        lines.append("  IMU Standalone: \(imuStandalone) (\(percentage(imuStandalone, of: totalClicks)))")
+        lines.append("")
+
+        lines.append("--- Rejections ---")
+        lines.append("No IMU Match: \(rejectedNoImuMatch)")
+        lines.append("Refractory: \(rejectedRefractory)")
+        lines.append("")
+
+        lines.append("--- Inter-Event Intervals ---")
+        lines.append("Min: \(String(format: "%.0f", minIEI))ms")
+        lines.append("Max: \(String(format: "%.0f", maxIEI))ms")
+        lines.append("Avg: \(String(format: "%.0f", avgIEI))ms")
+        lines.append("")
+
+        lines.append("--- Configuration ---")
+        lines.append("Association Window: ±\(Int(associationWindowMs))ms")
+        lines.append("Global Refractory: \(Int(globalRefractoryMs))ms")
+        lines.append("Backup NCC Threshold: \(String(format: "%.2f", backupNccThreshold))")
+        lines.append("Standalone NCC Threshold: \(String(format: "%.2f", standaloneNccThreshold))")
+
+        return lines.joined(separator: "\n")
+    }
+
+    private func percentage(_ value: Int, of total: Int) -> String {
+        guard total > 0 else { return "0%" }
+        return String(format: "%.0f%%", Double(value) / Double(total) * 100)
+    }
+}
+
 // MARK: - Watch Detector Metadata
 
 /// Metadata about Watch's pinch detection configuration and results

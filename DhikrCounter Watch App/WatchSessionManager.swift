@@ -63,6 +63,7 @@ class WatchSessionManager: NSObject, ObservableObject {
         let detectionEvents: [DetectionEvent]
         let motionInterruptions: [MotionInterruption]
         let detectorMetadata: WatchDetectorMetadata?
+        let hybridMetadata: HybridDetectionMetadata?
         let sessionId: UUID
     }
     
@@ -85,11 +86,11 @@ class WatchSessionManager: NSObject, ObservableObject {
         transferStatus = "WCSession activation requested"
     }
     
-    func transferSensorData(sensorData: [SensorReading], detectionEvents: [DetectionEvent], motionInterruptions: [MotionInterruption], detectorMetadata: WatchDetectorMetadata?, sessionId: UUID) {
+    func transferSensorData(sensorData: [SensorReading], detectionEvents: [DetectionEvent], motionInterruptions: [MotionInterruption], detectorMetadata: WatchDetectorMetadata?, hybridMetadata: HybridDetectionMetadata?, sessionId: UUID) {
 
         let session = WCSession.default
         guard session.activationState == .activated else {
-            let pendingTransfer = PendingTransfer(sensorData: sensorData, detectionEvents: detectionEvents, motionInterruptions: motionInterruptions, detectorMetadata: detectorMetadata, sessionId: sessionId)
+            let pendingTransfer = PendingTransfer(sensorData: sensorData, detectionEvents: detectionEvents, motionInterruptions: motionInterruptions, detectorMetadata: detectorMetadata, hybridMetadata: hybridMetadata, sessionId: sessionId)
             pendingTransfers.append(pendingTransfer)
             transferStatus = "Queued - waiting for activation (\(pendingTransfers.count) pending)"
             return
@@ -97,7 +98,7 @@ class WatchSessionManager: NSObject, ObservableObject {
 
         Task {
             do {
-                try await performFileTransfer(sensorData: sensorData, detectionEvents: detectionEvents, motionInterruptions: motionInterruptions, detectorMetadata: detectorMetadata, sessionId: sessionId)
+                try await performFileTransfer(sensorData: sensorData, detectionEvents: detectionEvents, motionInterruptions: motionInterruptions, detectorMetadata: detectorMetadata, hybridMetadata: hybridMetadata, sessionId: sessionId)
             } catch {
                 await MainActor.run {
                     self.transferStatus = "Transfer error: \(error.localizedDescription)"
@@ -107,7 +108,7 @@ class WatchSessionManager: NSObject, ObservableObject {
         }
     }
     
-    private func performFileTransfer(sensorData: [SensorReading], detectionEvents: [DetectionEvent], motionInterruptions: [MotionInterruption], detectorMetadata: WatchDetectorMetadata?, sessionId: UUID) async throws {
+    private func performFileTransfer(sensorData: [SensorReading], detectionEvents: [DetectionEvent], motionInterruptions: [MotionInterruption], detectorMetadata: WatchDetectorMetadata?, hybridMetadata: HybridDetectionMetadata?, sessionId: UUID) async throws {
         let tempDir = FileManager.default.temporaryDirectory
         let timestamp = Int(Date().timeIntervalSince1970)
         let fileExtension = exportFormat.lowercased()
@@ -160,7 +161,8 @@ class WatchSessionManager: NSObject, ObservableObject {
                 sensorData: sensorData,
                 detectionEvents: detectionEvents,
                 motionInterruptions: motionInterruptions,
-                watchDetectorMetadata: detectorMetadata
+                watchDetectorMetadata: detectorMetadata,
+                hybridDetectionMetadata: hybridMetadata
             )
 
             let encoder = JSONEncoder()
@@ -312,6 +314,7 @@ private struct SessionData: Codable {
     let detectionEvents: [DetectionEvent]
     let motionInterruptions: [MotionInterruption]
     let watchDetectorMetadata: WatchDetectorMetadata?
+    let hybridDetectionMetadata: HybridDetectionMetadata?
 }
 
 // MARK: - WCSessionDelegate
@@ -346,6 +349,7 @@ extension WatchSessionManager: @preconcurrency WCSessionDelegate {
                                     detectionEvents: pendingTransfer.detectionEvents,
                                     motionInterruptions: pendingTransfer.motionInterruptions,
                                     detectorMetadata: pendingTransfer.detectorMetadata,
+                                    hybridMetadata: pendingTransfer.hybridMetadata,
                                     sessionId: pendingTransfer.sessionId
                                 )
                             } catch {

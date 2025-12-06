@@ -150,9 +150,10 @@ class PhoneSessionManager: NSObject, ObservableObject {
             let detectionEvents = persistedData?.detectionEvents ?? getDetectionEvents(for: sessionId) ?? []
             let motionInterruptions = persistedData?.motionInterruptions ?? []
             let watchDetectorMetadata = persistedData?.watchDetectorMetadata
+            let hybridDetectionMetadata = persistedData?.hybridDetectionMetadata
 
             // Save the updated session to disk, preserving all original data
-            saveSession(updatedSession, sensorData: sensorData, detectionEvents: detectionEvents, motionInterruptions: motionInterruptions, watchDetectorMetadata: watchDetectorMetadata)
+            saveSession(updatedSession, sensorData: sensorData, detectionEvents: detectionEvents, motionInterruptions: motionInterruptions, watchDetectorMetadata: watchDetectorMetadata, hybridDetectionMetadata: hybridDetectionMetadata)
 
             addDebugMessage("✅ Successfully updated actual pinch count for session \(sessionId.prefix(8))")
         } else {
@@ -189,9 +190,10 @@ class PhoneSessionManager: NSObject, ObservableObject {
             let detectionEvents = persistedData?.detectionEvents ?? getDetectionEvents(for: sessionId) ?? []
             let motionInterruptions = persistedData?.motionInterruptions ?? []
             let watchDetectorMetadata = persistedData?.watchDetectorMetadata
+            let hybridDetectionMetadata = persistedData?.hybridDetectionMetadata
 
             // Save the updated session to disk, preserving all original data
-            saveSession(updatedSession, sensorData: sensorData, detectionEvents: detectionEvents, motionInterruptions: motionInterruptions, watchDetectorMetadata: watchDetectorMetadata)
+            saveSession(updatedSession, sensorData: sensorData, detectionEvents: detectionEvents, motionInterruptions: motionInterruptions, watchDetectorMetadata: watchDetectorMetadata, hybridDetectionMetadata: hybridDetectionMetadata)
 
             addDebugMessage("✅ Successfully updated notes for session \(sessionId.prefix(8))")
         } else {
@@ -273,6 +275,20 @@ class PhoneSessionManager: NSObject, ObservableObject {
     /// Get Watch detector summary string for display
     func getWatchDetectorSummary(for sessionId: String) -> String? {
         return getWatchDetectorMetadata(for: sessionId)?.summary()
+    }
+
+    /// Get Hybrid detection metadata for a session (loaded from disk on-demand)
+    func getHybridDetectionMetadata(for sessionId: String) -> HybridDetectionMetadata? {
+        let fileName = "session_\(sessionId).json"
+        let fileURL = sessionsDirectory.appendingPathComponent(fileName)
+
+        let persistedData = loadPersistedSessionData(from: fileURL)
+        return persistedData?.hybridDetectionMetadata
+    }
+
+    /// Get Hybrid detection summary string for display
+    func getHybridDetectionSummary(for sessionId: String) -> String? {
+        return getHybridDetectionMetadata(for: sessionId)?.summary()
     }
     
     private func loadPersistedSessionData(from fileURL: URL) -> PersistedSessionData? {
@@ -652,7 +668,7 @@ class PhoneSessionManager: NSObject, ObservableObject {
         }
     }
     
-    private func saveSession(_ session: DhikrSession, sensorData: [SensorReading], detectionEvents: [DetectionEvent], motionInterruptions: [MotionInterruption] = [], watchDetectorMetadata: WatchDetectorMetadata? = nil) {
+    private func saveSession(_ session: DhikrSession, sensorData: [SensorReading], detectionEvents: [DetectionEvent], motionInterruptions: [MotionInterruption] = [], watchDetectorMetadata: WatchDetectorMetadata? = nil, hybridDetectionMetadata: HybridDetectionMetadata? = nil) {
         addDebugMessage("💾 SAVING SESSION:")
         addDebugMessage("   • ID: \(session.id.uuidString.prefix(8))")
         addDebugMessage("   • Sensor readings: \(sensorData.count)")
@@ -661,6 +677,9 @@ class PhoneSessionManager: NSObject, ObservableObject {
         addDebugMessage("   • Duration: \(String(format: "%.1fs", session.sessionDuration))")
         if let metadata = watchDetectorMetadata {
             addDebugMessage("   • Watch detector: \(metadata.configSource), gateK=\(String(format: "%.1f", metadata.gateK))")
+        }
+        if let hybridMeta = hybridDetectionMetadata {
+            addDebugMessage("   • Hybrid detection: \(hybridMeta.totalClicks) clicks (Audio:\(hybridMeta.audioConfirmed), IMU_BACKUP:\(hybridMeta.imuBackup), IMU_ONLY:\(hybridMeta.imuStandalone))")
         }
 
         let sessionData = PersistedSessionData(
@@ -676,7 +695,8 @@ class PhoneSessionManager: NSObject, ObservableObject {
             sensorData: sensorData,
             detectionEvents: detectionEvents,
             motionInterruptions: motionInterruptions.isEmpty ? nil : motionInterruptions,
-            watchDetectorMetadata: watchDetectorMetadata
+            watchDetectorMetadata: watchDetectorMetadata,
+            hybridDetectionMetadata: hybridDetectionMetadata
         )
         
         let fileName = "session_\(session.id.uuidString).json"
@@ -975,7 +995,8 @@ extension PhoneSessionManager: @preconcurrency WCSessionDelegate {
                         sensorData: sessionData.sensorData,
                         detectionEvents: sessionData.detectionEvents,
                         motionInterruptions: sessionData.motionInterruptions,
-                        watchDetectorMetadata: watchDetectorMetadataFromTransfer
+                        watchDetectorMetadata: watchDetectorMetadataFromTransfer,
+                        hybridDetectionMetadata: sessionData.hybridDetectionMetadata
                     )
                     print("📥 Added watchDetectorMetadata from transfer metadata to SessionData")
                 }
@@ -1008,11 +1029,14 @@ extension PhoneSessionManager: @preconcurrency WCSessionDelegate {
 
                     // Save session to disk
                     let motionInterruptions = sessionData.motionInterruptions ?? []
-                    self.saveSession(session, sensorData: sessionData.sensorData, detectionEvents: sessionData.detectionEvents, motionInterruptions: motionInterruptions, watchDetectorMetadata: sessionData.watchDetectorMetadata)
+                    self.saveSession(session, sensorData: sessionData.sensorData, detectionEvents: sessionData.detectionEvents, motionInterruptions: motionInterruptions, watchDetectorMetadata: sessionData.watchDetectorMetadata, hybridDetectionMetadata: sessionData.hybridDetectionMetadata)
 
                     var successMessage = "✅ Successfully processed file: \(sessionData.sensorData.count) sensor readings, \(sessionData.detectionEvents.count) events"
                     if sessionData.watchDetectorMetadata != nil {
                         successMessage += " (with Watch detector metadata)"
+                    }
+                    if sessionData.hybridDetectionMetadata != nil {
+                        successMessage += " (with Hybrid detection metadata)"
                     }
                     self.addDebugMessage(successMessage)
                 }
@@ -1131,7 +1155,8 @@ extension PhoneSessionManager: @preconcurrency WCSessionDelegate {
             sensorData: sensorReadings,
             detectionEvents: [], // CSV format doesn't include detection events separately
             motionInterruptions: [], // CSV format doesn't parse motion interruptions separately
-            watchDetectorMetadata: nil // CSV format doesn't include detector metadata
+            watchDetectorMetadata: nil, // CSV format doesn't include detector metadata
+            hybridDetectionMetadata: nil // CSV format doesn't include hybrid metadata
         )
     }
 }
@@ -1145,6 +1170,7 @@ private struct SessionData: Codable {
     let detectionEvents: [DetectionEvent]
     let motionInterruptions: [MotionInterruption]?
     let watchDetectorMetadata: WatchDetectorMetadata?
+    let hybridDetectionMetadata: HybridDetectionMetadata?
 }
 
 // Lightweight metadata for fast startup loading
@@ -1189,6 +1215,7 @@ private struct PersistedSessionData: Codable {
     let detectionEvents: [DetectionEvent]
     let motionInterruptions: [MotionInterruption]?
     let watchDetectorMetadata: WatchDetectorMetadata?
+    let hybridDetectionMetadata: HybridDetectionMetadata?
 
     func toDhikrSession() -> DhikrSession {
         return DhikrSession.createWithId(

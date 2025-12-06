@@ -839,6 +839,35 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
         )
     }
 
+    /// Generate hybrid detection metadata for transfer to iOS
+    @MainActor
+    public func generateHybridMetadata() -> HybridDetectionMetadata? {
+        guard useHybridDetection, let hybrid = hybridManager else {
+            return nil
+        }
+
+        let stats = hybrid.getStatsForTransfer()
+        let debugEntries = Array(hybrid.debugLog.suffix(30))  // Last 30 entries
+
+        return HybridDetectionMetadata(
+            hybridModeEnabled: useHybridDetection,
+            totalClicks: hybrid.clickCount,
+            audioConfirmed: stats.audioConfirmed,
+            imuBackup: stats.imuBackup,
+            imuStandalone: stats.imuStandalone,
+            rejectedNoImuMatch: stats.rejectedNoImuMatch,
+            rejectedRefractory: stats.rejectedRefractory,
+            minIEI: stats.minIEI,
+            maxIEI: stats.maxIEI,
+            avgIEI: stats.avgIEI,
+            associationWindowMs: hybrid.associationWindowMs,
+            globalRefractoryMs: hybrid.globalRefractoryMs,
+            backupNccThreshold: hybrid.backupNccThreshold,
+            standaloneNccThreshold: hybrid.standaloneNccThreshold,
+            debugLogEntries: debugEntries
+        )
+    }
+
     private func variance(_ values: [Double]) -> Double {
         guard values.count > 1 else { return 0 }
         let mean = values.reduce(0, +) / Double(values.count)
@@ -915,6 +944,7 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
     private func transferSessionDataToPhone(sessionId: UUID, completion: @escaping (Bool) -> Void) {
         // First, generate metadata on main actor (it accesses @MainActor properties)
         let detectorMetadata = self.generateDetectorMetadata()
+        // hybridMetadata must be generated on MainActor, we'll do it inside the Task
 
         dataLogQueue.async { [weak self] in
             guard let self = self else { return }
@@ -931,20 +961,24 @@ class DhikrDetectionEngine: NSObject, ObservableObject, HKWorkoutSessionDelegate
 
             DispatchQueue.main.async {
                 Task { @MainActor in
+                    // Generate hybrid metadata on MainActor since it accesses @MainActor properties
+                    let hybridMetadata = self.generateHybridMetadata()
+
                     self.sessionManager.transferSensorData(
                         sensorData: sensorDataCopy,
                         detectionEvents: detectionEventsCopy,
                         motionInterruptions: motionInterruptionsCopy,
                         detectorMetadata: detectorMetadata,
+                        hybridMetadata: hybridMetadata,
                         sessionId: sessionId
                     )
 
                     // For now, assume transfer is successful since transferSensorData doesn't provide completion callback
                     // TODO: Enhance WatchSessionManager to provide completion callback
                     completion(true)
-                }
 
-                print("Initiated data transfer for session \(sessionId), hasMetadata: \(detectorMetadata != nil)")
+                    print("Initiated data transfer for session \(sessionId), hasMetadata: \(detectorMetadata != nil), hasHybridMetadata: \(hybridMetadata != nil)")
+                }
             }
         }
     }

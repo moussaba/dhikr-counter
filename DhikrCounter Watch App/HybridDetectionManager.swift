@@ -67,12 +67,23 @@ class HybridDetectionManager: ObservableObject {
     }
 
     /// Statistics for debugging
-    struct HybridStats {
+    struct HybridStats: Codable {
         var audioConfirmed: Int = 0
         var imuBackup: Int = 0
         var imuStandalone: Int = 0
         var rejectedNoImuMatch: Int = 0
         var rejectedRefractory: Int = 0
+
+        // Inter-event interval tracking
+        var interEventIntervals: [Double] = []  // ms between consecutive clicks
+        var minIEI: Double = 0
+        var maxIEI: Double = 0
+        var avgIEI: Double = 0
+
+        // Per-source IEI tracking for analysis
+        var audioIEIs: [Double] = []
+        var imuBackupIEIs: [Double] = []
+        var imuStandaloneIEIs: [Double] = []
     }
 
     /// Pending audio rejection waiting for IMU check
@@ -167,9 +178,10 @@ class HybridDetectionManager: ObservableObject {
         // Mark any IMU events in association window as consumed (prevent double-counting)
         consumeIMUEventsInWindow(around: timestamp)
 
+        let ieiMs = timeSinceLastOutput(timestamp) * 1000
         emitClick(source: .audio, timestamp: timestamp)
         stats.audioConfirmed += 1
-        addDebug(String(format: "CLICK [AUDIO]: +%.1fdB jump:%.1f", spikeDb, jump))
+        addDebug(String(format: "CLICK [AUDIO]: +%.1fdB jump:%.1f IEI:%.0fms", spikeDb, jump, ieiMs))
     }
 
     private func handleAudioRejected(reason: AudioDetectionResult.RejectionReason, timestamp: Date, spikeDb: Float) {
@@ -221,13 +233,21 @@ class HybridDetectionManager: ObservableObject {
         }
 
         // Emit backup click
+        let ieiMs = timeSinceLastOutput(timestamp) * 1000
         emitClick(source: .imuBackup, timestamp: timestamp)
         stats.imuBackup += 1
-        addDebug(String(format: "CLICK [IMU_BACKUP]: Audio rejected (%@) +%.1fdB, IMU confirmed (NCC=%.2f)",
-                       rejection.reason.rawValue, rejection.spikeDb, imuEvent.ncc))
+        addDebug(String(format: "CLICK [IMU_BACKUP]: Audio rejected (%@) +%.1fdB, IMU (NCC=%.2f) IEI:%.0fms",
+                       rejection.reason.rawValue, rejection.spikeDb, imuEvent.ncc, ieiMs))
     }
 
     private func handleIMUStandalone(event: PinchEvent, timestamp: Date) {
+        // DISABLED: Standalone IMU mode causes too many phantom clicks from wrist motion
+        // IMU is now only used as backup when audio rejects due to noise
+        // To re-enable: remove this early return and uncomment the code below
+        addDebug(String(format: "IMU standalone DISABLED (NCC=%.2f) - IMU only used as backup", event.ncc))
+        return
+
+        /*
         // Check global refractory
         guard passesGlobalRefractory(timestamp) else {
             stats.rejectedRefractory += 1
@@ -241,12 +261,41 @@ class HybridDetectionManager: ObservableObject {
         }
 
         // Emit standalone click
+        let ieiMs = timeSinceLastOutput(timestamp) * 1000
         emitClick(source: .imuStandalone, timestamp: timestamp)
         stats.imuStandalone += 1
-        addDebug(String(format: "CLICK [IMU_ONLY]: No audio, IMU standalone (NCC=%.2f)", event.ncc))
+        addDebug(String(format: "CLICK [IMU_ONLY]: No audio, IMU standalone (NCC=%.2f) IEI:%.0fms", event.ncc, ieiMs))
+        */
     }
 
     private func emitClick(source: HybridClickSource, timestamp: Date) {
+        // Calculate inter-event interval
+        var ieiMs: Double = 0
+        if let lastTime = lastClickTime {
+            ieiMs = timestamp.timeIntervalSince(lastTime) * 1000.0
+            stats.interEventIntervals.append(ieiMs)
+
+            // Update per-source IEI
+            switch source {
+            case .audio:
+                stats.audioIEIs.append(ieiMs)
+            case .imuBackup:
+                stats.imuBackupIEIs.append(ieiMs)
+            case .imuStandalone:
+                stats.imuStandaloneIEIs.append(ieiMs)
+            }
+
+            // Update min/max/avg IEI
+            if stats.minIEI == 0 || ieiMs < stats.minIEI {
+                stats.minIEI = ieiMs
+            }
+            if ieiMs > stats.maxIEI {
+                stats.maxIEI = ieiMs
+            }
+            let totalIEI = stats.interEventIntervals.reduce(0, +)
+            stats.avgIEI = totalIEI / Double(stats.interEventIntervals.count)
+        }
+
         clickCount += 1
         lastClickTime = timestamp
         lastOutputTime = timestamp
@@ -327,6 +376,39 @@ class HybridDetectionManager: ObservableObject {
         // Remove old IMU events (older than buffer window)
         let cutoff = now.addingTimeInterval(-bufferWindowSec)
         recentIMUEvents.removeAll { $0.timestamp < cutoff }
+    }
+
+    // MARK: - Stats Summary
+
+    /// Get stats for transfer to iOS
+    func getStatsForTransfer() -> HybridStats {
+        return stats
+    }
+
+    /// Generate a summary string for debugging
+    func getStatsSummary() -> String {
+        var lines: [String] = []
+        lines.append("=== Hybrid Detection Summary ===")
+        lines.append("Total Clicks: \(clickCount)")
+        lines.append("  Audio Confirmed: \(stats.audioConfirmed)")
+        lines.append("  IMU Backup: \(stats.imuBackup)")
+        lines.append("  IMU Standalone: \(stats.imuStandalone)")
+        lines.append("")
+        lines.append("Rejections:")
+        lines.append("  No IMU Match: \(stats.rejectedNoImuMatch)")
+        lines.append("  Refractory: \(stats.rejectedRefractory)")
+        lines.append("")
+        lines.append("Inter-Event Intervals:")
+        lines.append("  Min: \(String(format: "%.0f", stats.minIEI))ms")
+        lines.append("  Max: \(String(format: "%.0f", stats.maxIEI))ms")
+        lines.append("  Avg: \(String(format: "%.0f", stats.avgIEI))ms")
+        lines.append("")
+        lines.append("Config:")
+        lines.append("  Association Window: ±\(Int(associationWindowMs))ms")
+        lines.append("  Global Refractory: \(Int(globalRefractoryMs))ms")
+        lines.append("  Backup NCC: \(backupNccThreshold)")
+        lines.append("  Standalone NCC: \(standaloneNccThreshold)")
+        return lines.joined(separator: "\n")
     }
 
     // MARK: - Debug Logging

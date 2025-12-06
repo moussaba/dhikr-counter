@@ -440,6 +440,9 @@ struct SessionDetailView: View {
                 // Watch detector metadata (if available)
                 WatchDetectorMetadataCard(sessionId: session.id.uuidString)
 
+                // Hybrid detection metadata (if available)
+                HybridDetectionMetadataCard(sessionId: session.id.uuidString)
+
                 // Validation data
                 ValidationDataCard(session: session)
 
@@ -739,6 +742,234 @@ struct WatchStatRow: View {
         .padding(.horizontal, 8)
         .background(Color(.systemGray6))
         .cornerRadius(6)
+    }
+}
+
+// MARK: - Hybrid Detection Metadata Card
+
+struct HybridDetectionMetadataCard: View {
+    let sessionId: String
+    @ObservedObject private var dataManager = PhoneSessionManager.shared
+    @State private var isExpanded = false
+
+    private var metadata: HybridDetectionMetadata? {
+        dataManager.getHybridDetectionMetadata(for: sessionId)
+    }
+
+    var body: some View {
+        if let metadata = metadata, metadata.hybridModeEnabled {
+            VStack(alignment: .leading, spacing: 12) {
+                // Header with expand toggle
+                Button(action: { withAnimation { isExpanded.toggle() } }) {
+                    HStack {
+                        Image(systemName: "waveform.path.ecg")
+                            .foregroundColor(.cyan)
+                        Text("Hybrid Detection")
+                            .font(.headline)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.primary)
+                        Spacer()
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+
+                // Summary row (always visible)
+                HStack(spacing: 12) {
+                    HybridMetadataItem(
+                        label: "Total",
+                        value: "\(metadata.totalClicks)",
+                        color: .primary
+                    )
+                    HybridMetadataItem(
+                        label: "Audio",
+                        value: "\(metadata.audioConfirmed)",
+                        color: .green
+                    )
+                    HybridMetadataItem(
+                        label: "IMU Backup",
+                        value: "\(metadata.imuBackup)",
+                        color: .orange
+                    )
+                    HybridMetadataItem(
+                        label: "IMU Only",
+                        value: "\(metadata.imuStandalone)",
+                        color: .blue
+                    )
+                }
+
+                // Expanded details
+                if isExpanded {
+                    Divider()
+
+                    // Click Source Breakdown
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Click Source Distribution")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(.secondary)
+
+                        if metadata.totalClicks > 0 {
+                            HStack(spacing: 4) {
+                                // Audio bar
+                                Rectangle()
+                                    .fill(Color.green)
+                                    .frame(width: barWidth(metadata.audioConfirmed, of: metadata.totalClicks), height: 20)
+                                // IMU Backup bar
+                                Rectangle()
+                                    .fill(Color.orange)
+                                    .frame(width: barWidth(metadata.imuBackup, of: metadata.totalClicks), height: 20)
+                                // IMU Standalone bar
+                                Rectangle()
+                                    .fill(Color.blue)
+                                    .frame(width: barWidth(metadata.imuStandalone, of: metadata.totalClicks), height: 20)
+                            }
+                            .cornerRadius(4)
+
+                            HStack {
+                                Label("\(percentage(metadata.audioConfirmed, of: metadata.totalClicks)) Audio", systemImage: "")
+                                    .font(.caption2)
+                                    .foregroundColor(.green)
+                                Spacer()
+                                Label("\(percentage(metadata.imuBackup, of: metadata.totalClicks)) Backup", systemImage: "")
+                                    .font(.caption2)
+                                    .foregroundColor(.orange)
+                                Spacer()
+                                Label("\(percentage(metadata.imuStandalone, of: metadata.totalClicks)) Standalone", systemImage: "")
+                                    .font(.caption2)
+                                    .foregroundColor(.blue)
+                            }
+                        }
+                    }
+
+                    Divider()
+
+                    // Inter-Event Interval Statistics
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Inter-Event Intervals")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(.secondary)
+
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 8) {
+                            WatchStatRow(label: "Min IEI", value: String(format: "%.0fms", metadata.minIEI))
+                            WatchStatRow(label: "Avg IEI", value: String(format: "%.0fms", metadata.avgIEI))
+                            WatchStatRow(label: "Max IEI", value: String(format: "%.0fms", metadata.maxIEI))
+                        }
+                    }
+
+                    Divider()
+
+                    // Rejection Statistics
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Rejections")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(.secondary)
+
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 8) {
+                            WatchStatRow(label: "No IMU Match", value: "\(metadata.rejectedNoImuMatch)")
+                            WatchStatRow(label: "Refractory", value: "\(metadata.rejectedRefractory)")
+                        }
+                    }
+
+                    Divider()
+
+                    // Configuration
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Configuration")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(.secondary)
+
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 8) {
+                            WatchStatRow(label: "Assoc. Window", value: "±\(Int(metadata.associationWindowMs))ms")
+                            WatchStatRow(label: "Refractory", value: "\(Int(metadata.globalRefractoryMs))ms")
+                            WatchStatRow(label: "Backup NCC", value: String(format: "%.2f", metadata.backupNccThreshold))
+                            WatchStatRow(label: "Standalone NCC", value: String(format: "%.2f", metadata.standaloneNccThreshold))
+                        }
+                    }
+
+                    // Debug Log (last few entries)
+                    if !metadata.debugLogEntries.isEmpty {
+                        Divider()
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Debug Log (last \(metadata.debugLogEntries.count) entries)")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                                .foregroundColor(.secondary)
+
+                            ScrollView {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    ForEach(metadata.debugLogEntries, id: \.self) { entry in
+                                        Text(entry)
+                                            .font(.system(size: 10, design: .monospaced))
+                                            .foregroundColor(logEntryColor(entry))
+                                    }
+                                }
+                            }
+                            .frame(maxHeight: 200)
+                            .padding(8)
+                            .background(Color(.systemGray6))
+                            .cornerRadius(8)
+                        }
+                    }
+                }
+            }
+            .padding()
+            .background(Color(.systemBackground))
+            .cornerRadius(16)
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(Color.cyan.opacity(0.3), lineWidth: 1)
+            )
+        }
+        // If no metadata or hybrid mode disabled, show nothing
+    }
+
+    private func barWidth(_ value: Int, of total: Int) -> CGFloat {
+        guard total > 0 else { return 0 }
+        let maxWidth: CGFloat = 200
+        return CGFloat(value) / CGFloat(total) * maxWidth
+    }
+
+    private func percentage(_ value: Int, of total: Int) -> String {
+        guard total > 0 else { return "0%" }
+        return String(format: "%.0f%%", Double(value) / Double(total) * 100)
+    }
+
+    private func logEntryColor(_ entry: String) -> Color {
+        if entry.contains("CLICK [AUDIO]") {
+            return .green
+        } else if entry.contains("CLICK [IMU_BACKUP]") {
+            return .orange
+        } else if entry.contains("CLICK [IMU_ONLY]") {
+            return .blue
+        } else if entry.contains("REJECTED") || entry.contains("blocked") || entry.contains("expired") {
+            return .red
+        }
+        return .primary
+    }
+}
+
+struct HybridMetadataItem: View {
+    let label: String
+    let value: String
+    let color: Color
+
+    var body: some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(.title3)
+                .fontWeight(.bold)
+                .foregroundColor(color)
+            Text(label)
+                .font(.caption2)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity)
     }
 }
 

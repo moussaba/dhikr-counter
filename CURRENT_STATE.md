@@ -1,8 +1,8 @@
 # Current State: Hybrid Audio + Accelerometer Detection
 
 **Date**: 2025-12-05
-**Branch**: `issue-48-hybrid-audio-accelerometer`
-**Status**: Implementing hybrid detection - needs Xcode project file update
+**Branch**: `issue-48-audio-pinch-detection`
+**Status**: Hybrid detection implemented with iOS debug UI - needs threshold tuning
 
 ## Problem Being Solved
 
@@ -34,7 +34,7 @@ Audio detection works well in quiet environments but loses real clicks when:
                      │
                      ▼
               Single Click Output
-              (source: AUDIO | IMU_BACKUP)
+              (source: AUDIO | IMU_BACKUP | IMU_ONLY)
 ```
 
 ## Decision Logic
@@ -46,24 +46,28 @@ Audio detection works well in quiet environments but loses real clicks when:
 | `.rejected(VOICE/TOO_LOUD)` | No match | 0 clicks |
 | No audio event | NCC ≥ 0.70 | 1 click (IMU_STANDALONE) |
 
-## Files Created/Modified This Session
+## Known Issue: IMU_ONLY Phantom Clicks
+
+From testing, we observed **phantom IMU_ONLY clicks**, particularly:
+- At session start before audio is active
+- During session when hand/wrist moves without pinching
+- At session end when stopping
+
+**Potential fixes**:
+1. Raise `standaloneNccThreshold` from 0.70 to 0.80+
+2. Disable standalone IMU mode entirely (only use as backup)
+3. Add additional velocity/motion check before standalone click
+
+## Files Modified This Session
 
 | File | Changes |
 |------|---------|
-| `DhikrCounter Watch App/AudioPinchDetector.swift` | Added `AudioDetectionResult` enum, `onDetectionResult` callback |
-| `DhikrCounter Watch App/HybridDetectionManager.swift` | **NEW** - Arbitration logic (needs Xcode add) |
-| `DhikrCounter Watch App/DhikrDetectionEngine.swift` | Integrated hybrid manager, routing, callbacks |
-
-## ⚠️ IMPORTANT: Manual Step Required
-
-**You must add `HybridDetectionManager.swift` to the Xcode project:**
-
-1. Open `DhikrCounter.xcodeproj` in Xcode
-2. In the Project Navigator, right-click on "DhikrCounter Watch App"
-3. Select "Add Files to 'DhikrCounter'..."
-4. Navigate to `DhikrCounter Watch App/HybridDetectionManager.swift`
-5. Make sure "DhikrCounter Watch App" target is checked
-6. Click "Add"
+| `DhikrCounter Watch App/HybridDetectionManager.swift` | Added IEI tracking, stats summary, Codable stats |
+| `DhikrCounter Watch App/DhikrDetectionEngine.swift` | Added `generateHybridMetadata()` method |
+| `DhikrCounter Watch App/WatchSessionManager.swift` | Added `hybridDetectionMetadata` to SessionData |
+| `Shared/PinchTypes.swift` | Added `HybridDetectionMetadata` struct |
+| `DhikrCounter/PhoneSessionManager.swift` | Added hybrid metadata receiving and storage |
+| `DhikrCounter/DataVisualizationView.swift` | Added `HybridDetectionMetadataCard` UI |
 
 ## Key Parameters
 
@@ -72,8 +76,18 @@ Audio detection works well in quiet environments but loses real clicks when:
 | `associationWindowMs` | 75 | Link audio/IMU events within ±75ms |
 | `globalRefractoryMs` | 250 | Min time between output clicks |
 | `backupNccThreshold` | 0.60 | IMU threshold when audio rejects |
-| `standaloneNccThreshold` | 0.70 | IMU threshold with no audio event |
+| `standaloneNccThreshold` | 0.70 | IMU threshold with no audio event (needs tuning!) |
 | `maxSpikeDb` | 35.0 | Audio rejects louder as "ambient" |
+
+## iOS Debug UI Features
+
+The new `HybridDetectionMetadataCard` shows:
+- Total clicks and breakdown by source (Audio/IMU Backup/IMU Only)
+- Click source distribution bar chart
+- Inter-event interval statistics (min/avg/max IEI)
+- Rejection counts (No IMU Match, Refractory)
+- Configuration parameters
+- Last 30 debug log entries with color coding
 
 ## Quick Resume Commands
 
@@ -83,11 +97,15 @@ git status
 git log --oneline -5
 
 # Current branch
-git branch  # issue-48-hybrid-audio-accelerometer
+git branch
 
-# Build Watch app (after adding HybridDetectionManager.swift to Xcode)
+# Build Watch app
 xcodebuild -scheme "DhikrCounter Watch App" -configuration Debug \
   -destination "platform=watchOS Simulator,name=Apple Watch Series 11 (46mm)" build
+
+# Build iOS app
+xcodebuild -scheme "DhikrCounter" -configuration Debug \
+  -destination "platform=iOS Simulator,name=iPhone 17 Pro" build
 ```
 
 ## Testing Plan
@@ -97,18 +115,19 @@ xcodebuild -scheme "DhikrCounter Watch App" -configuration Debug \
 3. **Voice test**: Say "Hmm" - audio rejects as VOICE, IMU should NOT fire (no pinch motion)
 4. **Door slam**: Audio rejects as TOO_LOUD, IMU should NOT fire (no pinch motion)
 5. **Click during noise**: Audio rejects, but IMU detects pinch motion → count click
+6. **IEI analysis**: Check for suspiciously short IEIs (<200ms) that indicate phantom clicks
 
 ## Still To Do
 
-- [ ] Add HybridDetectionManager.swift to Xcode project (manual step)
-- [ ] Add UI toggle for hybrid mode in Watch Settings
+- [ ] Tune standalone NCC threshold (0.70 seems too low, causing phantom clicks)
+- [ ] Consider disabling IMU_ONLY mode entirely
 - [ ] Test hybrid detection in various environments
-- [ ] Tune thresholds based on real-world testing
+- [ ] Analyze IEI distributions to identify optimal thresholds
 
 ## Open Issues
 
 | # | Title | Status |
 |---|-------|--------|
-| #48 | Investigate sound addition | In progress - implementing hybrid |
+| #48 | Investigate sound addition | In progress - hybrid implemented |
 | #49 | Verify event inter arrival time | Open |
 | #46 | Auto Reset count | Open |
