@@ -54,22 +54,44 @@ struct SettingsListView: View {
     @ObservedObject private var sessionManager = WatchSessionManager.shared
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 8) {
-                // Header
-                HStack {
-                    Image(systemName: "gearshape.fill")
-                        .foregroundColor(.blue)
-                    Text("Settings")
-                        .font(.headline)
-                    Spacer()
-                    if sessionManager.tkeoSettingsReceived {
-                        Image(systemName: "checkmark.icloud.fill")
-                            .foregroundColor(.green)
-                            .font(.caption)
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    // Experimental: Audio Detection Test
+                    NavigationLink(destination: AudioTestView()) {
+                        HStack {
+                            Image(systemName: "waveform.circle.fill")
+                                .foregroundColor(.purple)
+                            Text("Audio Detection Test")
+                                .font(.caption)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 8)
+                        .background(Color.purple.opacity(0.15))
+                        .cornerRadius(8)
                     }
-                }
-                .padding(.bottom, 4)
+                    .buttonStyle(.plain)
+
+                    Divider()
+
+                    // Header
+                    HStack {
+                        Image(systemName: "gearshape.fill")
+                            .foregroundColor(.blue)
+                        Text("Settings")
+                            .font(.headline)
+                        Spacer()
+                        if sessionManager.tkeoSettingsReceived {
+                            Image(systemName: "checkmark.icloud.fill")
+                                .foregroundColor(.green)
+                                .font(.caption)
+                        }
+                    }
+                    .padding(.bottom, 4)
 
                 // Last sync time
                 if let syncTime = sessionManager.lastSyncTime {
@@ -113,7 +135,8 @@ struct SettingsListView: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-        }
+        }  // ScrollView
+        }  // NavigationStack
     }
 
     private var timeFormatter: DateFormatter {

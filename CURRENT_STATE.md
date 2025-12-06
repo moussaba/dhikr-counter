@@ -1,162 +1,135 @@
-# Current State: Template Training UI Implementation
+# Current State: Audio-Based Pinch Detection Prototype
 
-**Date**: 2025-11-26
-**Branch**: `phase4-watch-deployment`
-**Last Commit**: `5b510ed` - "Update CURRENT_STATE.md with Phase 4 completion status"
+**Date**: 2025-12-05
+**Branch**: `issue-48-audio-pinch-detection`
+**Status**: Testing audio sensitivity - ring clicks are hard to detect
 
-## Project Context
-DhikrCounter app for Islamic prayer counting via pinch detection on Apple Watch. Phase 4 (streaming pinch detection on Watch) is complete. Currently implementing **User-Assisted Template Training** (Option 4) to allow users to label pinch peaks in recorded sessions and create personalized templates.
+## Problem Being Solved
 
-## Current Work: Template Training UI
+Apple Watch microphone has low sensitivity for detecting subtle finger ring clicks:
+- Baseline hovers around -68 dB
+- Ring clicks barely register above baseline
+- Tapping ring on table works, but finger-to-finger clicks don't
 
-### What Was Implemented
+## Current Detection Approach (Dual Method)
 
-| File | Status | Description |
-|------|--------|-------------|
-| `DhikrCounter/TemplateTrainingView.swift` | ✅ NEW | Full-screen peak labeling UI (~1000 lines) |
-| `DhikrCounter/DataVisualizationView.swift` | ✅ MODIFIED | Added "Train Templates" button |
-| `DhikrCounter/CompanionContentView.swift` | ✅ MODIFIED | Added "Saved Templates" navigation link |
-| `DhikrCounter/PhoneSessionManager.swift` | ✅ MODIFIED | Added `sendTrainedTemplates()` for Watch sync |
-| `DhikrCounter Watch App/WatchSessionManager.swift` | ✅ MODIFIED | Added file receive handler for templates |
-| `Shared/PinchTypes.swift` | ✅ MODIFIED | Loads user templates first before bundle defaults |
+The AudioPinchDetector now uses TWO detection methods:
 
-### Key Components in TemplateTrainingView.swift
+1. **Threshold Method**: Signal > baseline + threshold
+2. **Jump Method (NEW)**: Sudden jump of 2+ dB from previous buffer
 
-```swift
-// Data structures
-struct LabeledPeak: Identifiable, Codable {
-    let id: UUID
-    let timestamp: TimeInterval
-    let peakIndex: Int
-    var isConfirmed: Bool
-    let positionContext: String?
-}
+Either method triggers detection (OR logic).
 
-struct TrainedTemplateSet: Identifiable, Codable {
-    let id: UUID
-    let sourceSessionId: String
-    let createdDate: Date
-    let positionContext: String
-    let templateCount: Int
-    let templates: [[Float]]
-    let amplitudeSurplusThresholds: [Float]
-}
+## Key Parameters (Current Defaults)
 
-// Main manager singleton
-class TemplateTrainingManager: ObservableObject {
-    static let shared = TemplateTrainingManager()
-    @Published var labeledPeaks: [LabeledPeak] = []
-    @Published var trainedTemplateSets: [TrainedTemplateSet] = []
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `onsetThresholdDb` | 1.5 dB | Above baseline to trigger |
+| `minJumpDb` | 2.0 dB | Minimum sudden jump to trigger |
+| `refractoryPeriod` | 250 ms | Min time between detections |
+| `baselineAlpha` | 0.03 | Baseline adaptation speed |
+| `bufferSize` | 512 samples | ~10ms at 48kHz (faster response) |
 
-    func extractTemplates(from sensorData: [SensorReading], sessionId: String, userMarks: [LabeledPeak], fs: Float = 50.0) -> TrainedTemplateSet?
-    func syncToWatch()
-    func exportForWatch() -> Data?
-}
-```
+## Baseline Adaptation (Asymmetric)
 
-### UI Features
+| Signal Level | Baseline Behavior |
+|--------------|-------------------|
+| Below baseline | Adapts quickly (normal) |
+| 0-2 dB above | Adapts quickly (normal) |
+| 2 dB to threshold | Adapts slowly (1/10th speed) |
+| Above threshold | No adaptation (ignores spikes) |
 
-1. **Full-Screen Peak Labeler** (`FullScreenPeakLabeler`)
-   - Pinch-to-zoom (1x to 30x)
-   - Two-finger pan when zoomed
-   - Fixed Y-axis scale for consistent comparison
-   - Threshold slider to filter noise (percentile-based)
-   - Auto-detected peaks shown as gray diamonds
-   - User-confirmed peaks shown as green circles with timestamps
+## Files Modified This Session
 
-2. **Tap Gesture Handling** (uses `ChartProxy` for accurate coordinates)
-   - Tap gray diamond → Confirm auto-detected peak
-   - Tap green circle → Remove confirmed peak
-   - Tap elsewhere above threshold → Add new mark (snaps to local maximum)
+| File | Changes |
+|------|---------|
+| `DhikrCounter Watch App/AudioPinchDetector.swift` | Dual detection, asymmetric baseline, smaller buffer |
+| `DhikrCounter Watch App/AudioTestView.swift` | Loads settings from iPhone, shows settings by default |
+| `DhikrCounter Watch App/WatchSessionManager.swift` | Added `getSetting()` helper, logs audio settings |
+| `DhikrCounter Watch App/ContentView.swift` | Added Audio Detection Test link in Settings |
+| `DhikrCounter Watch App/Info.plist` | Added NSMicrophoneUsageDescription |
+| `DhikrCounter/CompanionContentView.swift` | Added Audio Detection settings section |
+| `DhikrCounter/PhoneSessionManager.swift` | Added audio settings to Watch sync |
 
-3. **Template Extraction**
-   - Extracts 25-sample windows around marked peaks
-   - Z-normalizes templates
-   - Computes amplitude surplus thresholds
-   - Requires minimum 3 valid marks
+## iOS Settings UI
 
-4. **Watch Sync**
-   - Templates saved to `trained_templates.json`
-   - Transferred via WatchConnectivity `transferFile()`
-   - Watch loads user templates before bundle defaults
+In iPhone app → Settings → "Audio Detection (Experimental)":
+- Toggle to enable/disable
+- Onset Threshold slider: 0.5 to 10.0 dB
+- Refractory Period slider: 100 to 500 ms
+- Must tap "Sync Now" to send to Watch
 
-### Bug Fixed This Session
+## Debug Info
 
-**Tap Offset Bug**: User had to tap to the RIGHT of peaks to select them.
+The Watch debug log shows detection method:
+- `ONSET #1 [JUMP]: +1.5dB (jump:3.2)` - Detected by sudden jump
+- `ONSET #2 [THRESH]: +2.1dB (jump:0.5)` - Detected by threshold
 
-**Root Cause**: The tap coordinate transformation used `location.x / chartWidth` which didn't account for Y-axis label space.
+## Next Steps to Try
 
-**Fix**: Used SwiftUI Charts' `ChartProxy.value(atX:)` method which properly converts screen coordinates to data values:
-
-```swift
-// OLD (incorrect)
-let tapRatio = location.x / chartWidth
-let tappedIndex = visibleStartIndex + Int(CGFloat(visibleSamples) * tapRatio)
-
-// NEW (correct)
-.chartOverlay { proxy in
-    GeometryReader { geometry in
-        Rectangle()
-            .fill(Color.clear)
-            .contentShape(Rectangle())
-            .onTapGesture { location in
-                guard let tappedXValue: Int = proxy.value(atX: location.x) else { return }
-                // tappedXValue is now the correct sample index
-            }
-    }
-}
-```
-
-### Build Status
-- ✅ iOS target compiles successfully (iPhone 16 Pro simulator)
-
-## Phase 4 Summary (Completed Previously)
-
-- StreamingPinchDetector deployed to Apple Watch
-- Single-sample processing API
-- Causal filtering, TKEO, L2 sensor fusion
-- Template validation with NCC
-- Quality gates: amplitude surplus, ISI, gyro veto
-- Pending hardware validation on real Watch
-
-## Testing Configuration
-
-**iPhone Simulator**: iPhone 16 Pro Max (has existing session data)
-**Watch Hardware**: Real Apple Watch for hardware testing
+1. **Lower thresholds further** - Try 0.5 dB threshold, 1.0 dB jump
+2. **Different rings** - Metal rings may produce louder clicks
+3. **Ring position** - Closer to Watch microphone (inner wrist?)
+4. **Alternative approach** - Frequency-based detection instead of energy
+5. **Hybrid with motion** - Combine audio + accelerometer for confirmation
 
 ## Quick Resume Commands
 
 ```bash
-# Check current branch and status
-git branch
+# Check current state
 git status
+git log --oneline -5
 
-# Build iOS app
-xcodebuild -scheme "DhikrCounter" -configuration Debug \
-  -destination "platform=iOS Simulator,name=iPhone 16 Pro" build
+# Current branch
+git branch  # issue-48-audio-pinch-detection
 
 # Build Watch app
 xcodebuild -scheme "DhikrCounter Watch App" -configuration Debug \
-  -destination "platform=watchOS Simulator,name=Apple Watch Series 10 (46mm)" build
+  -destination "platform=watchOS Simulator,name=Apple Watch Series 11 (46mm)" build
+
+# Build iOS app
+xcodebuild -scheme "DhikrCounter" -configuration Debug \
+  -destination "platform=iOS Simulator,name=iPhone 17 Pro Max" build
 ```
 
-## Next Steps
+## Uncommitted Changes
 
-1. **Test Template Training UI** - Verify tap accuracy after the fix
-2. **Train Templates** - Use the UI to mark peaks in a recorded session
-3. **Sync to Watch** - Transfer trained templates via WatchConnectivity
-4. **Validate Detection** - Test if personalized templates improve detection accuracy
-5. **Git Commit** - Commit template training implementation when complete
+All changes are uncommitted. To commit:
+```bash
+git add -A
+git commit -m "Improve audio detection sensitivity with dual detection method"
+```
 
-## Files Modified (Uncommitted)
+## Technical Notes
 
-- `DhikrCounter/TemplateTrainingView.swift` - Tap offset bug fix
-- `CURRENT_STATE.md` - This file
+### watchOS Audio Constraints
+- Sample rate fixed at 48kHz
+- Buffer size 512 samples = ~10.7ms per buffer
+- Must disconnect inputNode from mainMixerNode to avoid feedback
+- Microphone sensitivity appears quite low for subtle sounds
 
-## Notes
+### Detection Algorithm Flow
+```
+Audio Buffer (512 samples @ 48kHz)
+    ↓
+Compute RMS Energy (vDSP)
+    ↓
+Convert to dB: 20 * log10(rms)
+    ↓
+Update Baseline (asymmetric smoothing)
+    ↓
+Check Detection:
+  - Method 1: rmsDb > baseline + threshold?
+  - Method 2: (rmsDb - previousRmsDb) > minJumpDb?
+    ↓
+If either true AND refractory passed → ONSET DETECTED
+```
 
-- User selected Option 4 (User-Assisted Labeling) for template training
-- Full-screen landscape view preferred for dense signal data
-- Threshold filter helps reduce noise before marking
-- Auto-detected peaks provide reference points to reduce manual marking
-- Templates use Z-normalization for scale invariance
+## Open Issues
+
+| # | Title | Status |
+|---|-------|--------|
+| #48 | Investigate sound addition | In progress - sensitivity issues |
+| #49 | Verify event inter arrival time | Open |
+| #46 | Auto Reset count | Open |
+| #47 | Watch statistics disappears | ✅ Fixed (PR #50) |

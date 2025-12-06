@@ -350,7 +350,13 @@ class PhoneSessionManager: NSObject, ObservableObject {
             "tkeo_minWidthMs": getDouble("tkeo_minWidthMs", fallback: 70),
             "tkeo_maxWidthMs": getDouble("tkeo_maxWidthMs", fallback: 350),
             "tkeo_windowPreMs": getDouble("tkeo_windowPreMs", fallback: 150),
-            "tkeo_windowPostMs": getDouble("tkeo_windowPostMs", fallback: 150)
+            "tkeo_windowPostMs": getDouble("tkeo_windowPostMs", fallback: 150),
+
+            // Audio Detection Parameters
+            "audio_enabled": defaults.object(forKey: "audio_enabled") != nil ? defaults.bool(forKey: "audio_enabled") : false,
+            "audio_thresholdDb": getDouble("audio_thresholdDb", fallback: 3.0),
+            "audio_refractoryMs": getDouble("audio_refractoryMs", fallback: 200),
+            "audio_baselineAlpha": getDouble("audio_baselineAlpha", fallback: 0.05)
         ]
 
         // Log key values being synced

@@ -487,6 +487,14 @@ extension WatchSessionManager: @preconcurrency WCSessionDelegate {
                 print("   - templateConfidence: \(nccThresh)")
             }
 
+            // Log audio settings
+            if let audioEnabled = tkeoSettings["audio_enabled"] as? Bool {
+                print("   - audio_enabled: \(audioEnabled)")
+            }
+            if let audioThreshold = tkeoSettings["audio_thresholdDb"] as? Double {
+                print("   - audio_thresholdDb: \(audioThreshold)")
+            }
+
             // Store current settings as previous for next comparison
             self.previousSettings = self.tkeoSettings
 
@@ -565,6 +573,11 @@ extension WatchSessionManager: @preconcurrency WCSessionDelegate {
             "tkeo_useTemplateValidation": "Template Valid."
         ]
         return names[key] ?? key.replacingOccurrences(of: "tkeo_", with: "")
+    }
+
+    /// Get a single setting value by key
+    func getSetting(_ key: String) -> Any? {
+        return tkeoSettings[key]
     }
 
     /// Get all current settings formatted for display, with recently changed ones first
